@@ -5,6 +5,7 @@ load(
 )
 load(
     "//tensorflow/core/platform:build_config.bzl",
+    "tf_additional_tensor_coding_deps",
     "tf_proto_library",
     "tf_proto_library_cc",
 )
@@ -37,6 +38,7 @@ package_group(
         "//learning/brain/tools/tf_replay/...",
         "//tensorflow/...",
         "//tensorflow_models/...",
+        "//third_party/mlperf/submissions/training/v0_7/models/...",
     ],
 )
 
@@ -79,7 +81,7 @@ tf_portable_proto_library(
     name = "portable_tf2xla_proto",
     config_string = "allow_all:true",
     header_outs = ["//tensorflow/compiler/tf2xla/tf2xla.proto.h"],
-    portable_deps = ["//tensorflow/core:portable_proto_lib_full_runtime"],
+    portable_deps = ["//tensorflow/core:portable_proto_lib"],
     proto_deps = [
         ":tf2xla_proto",
         "//tensorflow/core:protos_all",
@@ -165,6 +167,7 @@ cc_library(
         ":tf2xla_proto_cc",
         ":tf2xla_util",
         ":xla_compiler",
+        "//tensorflow/compiler/jit",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:compile_mlir_util",
         "//tensorflow/compiler/mlir/tensorflow:convert_graphdef",
@@ -176,8 +179,11 @@ cc_library(
         "//tensorflow/compiler/mlir/xla:mlir_hlo_to_hlo",
         "//tensorflow/compiler/xla/client",
         "//tensorflow/compiler/xla/client:xla_computation",
-        "//tensorflow/core:framework",
         "//tensorflow/core:protos_all_cc",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Shape",
+        "@llvm-project//mlir:StandardOps",
     ],
 )
 
@@ -236,18 +242,20 @@ cc_library(
     features = ["fully_static_link"],
     linkstatic = 1,
     visibility = [":friends"],
-    # Note, we specifically remove MKL dependencies so the standalone does
-    # not require the MKL binary blob.
+    # Note, we specifically removed MKL and multithreaded dependencies so the
+    # standalone does not require the MKL binary blob or threading libraries.
+    #
+    # TODO(ebrevdo): Remove tf_additoinal_tensor_coding_deps in favor of
+    # absl/strings:cord when we update absl to a newer version.
     deps = [
-        "//tensorflow/core/framework:numeric_types",
-        "//third_party/eigen3",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/synchronization",
-    ],
+        "//third_party/eigen3",
+        "//tensorflow/core/framework:numeric_types",
+    ] + tf_additional_tensor_coding_deps(),
     alwayslink = 1,
 )
 
@@ -606,10 +614,12 @@ tf_cc_test(
         ":xla_compiler",
         "//tensorflow/cc:cc_ops",
         "//tensorflow/cc:function_ops",
+        "//tensorflow/cc:functional_ops",
         "//tensorflow/cc:ops",
         "//tensorflow/compiler/jit:xla_cluster_util",
         "//tensorflow/compiler/tf2xla/kernels:xla_ops",
         "//tensorflow/core:core_cpu_internal",
+        "//tensorflow/core:framework",
         "//tensorflow/core:ops",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
@@ -692,13 +702,10 @@ cc_library(
     srcs = ["mlir_bridge_pass.cc"],
     hdrs = ["mlir_bridge_pass.h"],
     deps = [
+        "//tensorflow/compiler/mlir:mlir_graph_optimization_pass",
         "//tensorflow/compiler/mlir/tensorflow",
-        "//tensorflow/compiler/mlir/tensorflow:convert_graphdef",
-        "//tensorflow/compiler/mlir/tensorflow:device_util",
-        "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
-        "//tensorflow/compiler/mlir/tensorflow:mlir_roundtrip_flags",
         "//tensorflow/core:core_cpu",
-        "@com_google_absl//absl/container:flat_hash_set",
+        "//tensorflow/core:lib",
         "@llvm-project//llvm:support",
     ],
     alwayslink = 1,
@@ -711,6 +718,7 @@ cc_library(
     ],
     deps = [
         ":mlir_bridge_pass",
+        "//tensorflow/compiler/mlir:mlir_graph_optimization_pass_registration",
         "//tensorflow/core:core_cpu",
     ],
     alwayslink = 1,

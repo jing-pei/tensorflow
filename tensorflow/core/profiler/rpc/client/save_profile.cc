@@ -15,39 +15,82 @@ limitations under the License.
 
 #include "tensorflow/core/profiler/rpc/client/save_profile.h"
 
-#include <cstdio>
-#include <ctime>
+#include <initializer_list>
+#include <memory>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/lib/io/compression.h"
-#include "tensorflow/core/lib/io/path.h"
+#include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
+#include "tensorflow/core/lib/io/zlib_compression_options.h"
+#include "tensorflow/core/lib/io/zlib_outputbuffer.h"
 #include "tensorflow/core/platform/env.h"
-#include "tensorflow/core/platform/protobuf.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/file_system.h"
+#include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/status.h"
+#include "tensorflow/core/profiler/profiler_service.pb.h"
+
 // Windows.h #defines ERROR, but it is also used in
 // tensorflow/core/util/event.proto
 #undef ERROR
-#include "tensorflow/core/protobuf/trace_events.pb.h"
 #include "tensorflow/core/util/events_writer.h"
 
 namespace tensorflow {
 namespace profiler {
 namespace {
 
-using ::tensorflow::io::JoinPath;
+#ifdef PLATFORM_WINDOWS
+const absl::string_view kPathSep = "\\";
+#else
+const absl::string_view kPathSep = "/";
+#endif
+
+string ProfilerJoinPathImpl(std::initializer_list<absl::string_view> paths) {
+  string result;
+  for (absl::string_view path : paths) {
+    if (path.empty()) continue;
+
+    if (result.empty()) {
+      result = string(path);
+      continue;
+    }
+
+    path = absl::StripPrefix(path, kPathSep);
+    if (absl::EndsWith(result, kPathSep)) {
+      absl::StrAppend(&result, path);
+    } else {
+      absl::StrAppend(&result, kPathSep, path);
+    }
+  }
+
+  return result;
+}
+
+// A local duplication of ::tensorflow::io::JoinPath that supports windows.
+// TODO(b/150699701): revert to use ::tensorflow::io::JoinPath when fixed.
+template <typename... T>
+string ProfilerJoinPath(const T&... args) {
+  return ProfilerJoinPathImpl({args...});
+}
 
 constexpr char kProtoTraceFileName[] = "trace";
 constexpr char kTfStatsHelperSuffix[] = "tf_stats_helper_result";
 
-Status DumpToolDataToLogDirectory(StringPiece run_dir, const string& host,
+Status DumpToolDataToLogDirectory(absl::string_view run_dir,
+                                  absl::string_view host,
                                   const ProfileToolData& tool,
                                   std::ostream* os) {
   // Don't save the intermediate results for combining the per host tool data.
   if (absl::EndsWith(tool.name(), kTfStatsHelperSuffix)) return Status::OK();
   string host_prefix = host.empty() ? "" : absl::StrCat(host, ".");
-  string path = JoinPath(run_dir, absl::StrCat(host_prefix, tool.name()));
+  string path =
+      ProfilerJoinPath(run_dir, absl::StrCat(host_prefix, tool.name()));
   TF_RETURN_IF_ERROR(WriteStringToFile(Env::Default(), path, tool.data()));
   if (os) {
     *os << "Dumped tool data for " << tool.name() << " to " << path
@@ -69,7 +112,7 @@ Status MaybeCreateEmptyEventFile(const string& logdir) {
       return Status::OK();
     }
   }
-  EventsWriter event_writer(JoinPath(logdir, "events"));
+  EventsWriter event_writer(ProfilerJoinPath(logdir, "events"));
   return event_writer.InitWithSuffix(kProfileEmptySuffix);
 }
 
@@ -89,7 +132,8 @@ Status WriteGzippedDataToFile(const string& filepath, const string& data) {
 Status GetOrCreateProfileRunDir(const string& logdir, const string& run,
                                 string* profile_run_dir, std::ostream* os) {
   // Dumps profile data to <logdir>/plugins/profile/<run>/.
-  *profile_run_dir = JoinPath(GetTensorBoardProfilePluginDir(logdir), run);
+  *profile_run_dir =
+      ProfilerJoinPath(GetTensorBoardProfilePluginDir(logdir), run);
   *os << "Creating directory: " << *profile_run_dir;
   TF_RETURN_IF_ERROR(Env::Default()->RecursivelyCreateDir(*profile_run_dir));
 
@@ -104,7 +148,7 @@ Status GetOrCreateProfileRunDir(const string& logdir, const string& run,
 string GetTensorBoardProfilePluginDir(const string& logdir) {
   constexpr char kPluginName[] = "plugins";
   constexpr char kProfileName[] = "profile";
-  return JoinPath(logdir, kPluginName, kProfileName);
+  return ProfilerJoinPath(logdir, kPluginName, kProfileName);
 }
 
 Status SaveTensorboardProfile(const string& logdir, const string& run,
@@ -132,10 +176,16 @@ Status SaveGzippedToolDataToTensorboardProfile(const string& logdir,
   LOG(INFO) << ss.str();
   TF_RETURN_IF_ERROR(status);
   string host_prefix = host.empty() ? "" : absl::StrCat(host, ".");
-  string path = JoinPath(profile_run_dir, absl::StrCat(host_prefix, tool_name));
+  string path =
+      ProfilerJoinPath(profile_run_dir, absl::StrCat(host_prefix, tool_name));
   TF_RETURN_IF_ERROR(WriteGzippedDataToFile(path, data));
   LOG(INFO) << "Dumped gzipped tool data for " << tool_name << " to " << path;
   return Status::OK();
+}
+
+string GetCurrentTimeStampAsString() {
+  return absl::FormatTime("%E4Y_%m_%d_%H_%M_%S", absl::Now(),
+                          absl::LocalTimeZone());
 }
 
 }  // namespace profiler

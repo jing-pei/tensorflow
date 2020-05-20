@@ -39,11 +39,11 @@ load(
     "//tensorflow:tensorflow.bzl",
     "if_chromiumos",
     "if_not_android",
+    "if_windows",
     "tf_cc_test",
     "tf_cc_tests",
     "tf_copts",  # @unused
     "tf_cuda_library",
-    "tf_portable_full_lite_protos",
 )
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
@@ -55,11 +55,12 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//tensorflow:tensorflow.bzl", "tf_cc_test_gpu")
 
 package(
-    default_visibility = [
-        "//tensorflow:__subpackages__",
-    ],
+    default_visibility = ["//tensorflow:__subpackages__"],
     licenses = ["notice"],  # Apache 2.0
 )
+
+# Authorized users go here.
+package_group(name = "friends")
 
 exports_files(
     [
@@ -84,6 +85,7 @@ exports_files(
         "mutex.h",
         "net.h",
         "numa.h",
+        "ram_file_system.h",
         "resource_loader.h",
         "resource.h",
         "snappy.h",
@@ -347,7 +349,9 @@ filegroup(
         "platform.h",
         "tstring.h",
         "types.h",
-    ],
+    ] + if_windows([
+        "//tensorflow/core/platform/windows:xla_cpu_runtime_srcs",
+    ]),
 )
 
 cc_library(
@@ -375,6 +379,15 @@ cc_library(
     hdrs = ["null_file_system.h"],
     deps = [
         ":env",
+    ],
+)
+
+py_test(
+    name = "ram_file_system_test",
+    srcs = ["ram_file_system_test.py"],
+    python_version = "PY3",
+    deps = [
+        "//tensorflow:tensorflow_py",
     ],
 )
 
@@ -458,10 +471,6 @@ cc_library(
         "protobuf_util.cc",
     ],
     hdrs = ["protobuf.h"],
-    defines = tf_portable_full_lite_protos(
-        full = [],
-        lite = ["TENSORFLOW_LITE_PROTOS"],
-    ),
     deps = [
         ":platform",
         ":types",
@@ -595,6 +604,7 @@ cc_library(
     name = "stacktrace_handler",
     textual_hdrs = ["stacktrace_handler.h"],
     deps = tf_windows_aware_platform_deps("stacktrace_handler"),
+    alwayslink = 1,
 )
 
 cc_library(
@@ -611,7 +621,7 @@ cc_library(
         ":stringpiece",
         ":stringprintf",
         ":types",
-        "//tensorflow/core:error_codes_proto_impl_cc",
+        "//tensorflow/core/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base",
     ],
 )
@@ -939,8 +949,6 @@ tf_cc_tests(
         "port_test.cc",
         "profile_utils/cpu_utils_test.cc",
         "scanner_test.cc",
-        "stacktrace_handler_test.cc",
-        "stacktrace_test.cc",
         "str_util_test.cc",
         "strcat_test.cc",
         "stringpiece_test.cc",
@@ -966,6 +974,37 @@ tf_cc_tests(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@zlib",
+    ],
+)
+
+tf_cc_test(
+    name = "stacktrace_test",
+    size = "small",
+    srcs = [
+        "stacktrace_test.cc",
+    ],
+    tags = ["no_windows"],
+    deps = [
+        ":logging",
+        ":stacktrace",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+    ],
+)
+
+tf_cc_tests(
+    name = "stacktrace_handler_test",
+    size = "small",
+    srcs = [
+        "stacktrace_handler_test.cc",
+    ],
+    tags = ["no_windows"],
+    deps = [
+        ":logging",
+        ":stacktrace",
+        ":stacktrace_handler",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
     ],
 )
 
@@ -1229,8 +1268,11 @@ filegroup(
     name = "lib_hdrs",
     srcs = [
         "abi.h",
+        "base64.h",
         "casts.h",
+        "coding.h",
         "context.h",
+        "cord.h",
         "cpu_feature_guard.h",
         "cpu_info.h",
         "dynamic_annotations.h",
@@ -1256,6 +1298,8 @@ filegroup(
         "profile_utils/cpu_utils.h",
         "profile_utils/i_cpu_utils_helper.h",
         "protobuf.h",
+        "ram_file_system.h",
+        "random.h",
         "resource.h",
         "stacktrace.h",
         "stacktrace_handler.h",
@@ -1428,6 +1472,7 @@ filegroup(
         "abi.h",
         "blocking_counter.h",
         "byte_order.h",
+        "casts.h",
         "coding.cc",
         "coding.h",
         "context.h",
@@ -1469,6 +1514,7 @@ filegroup(
         "protobuf.cc",
         "protobuf.h",
         "protobuf_util.cc",
+        "ram_file_system.h",
         "raw_coding.h",
         "refcount.h",
         "resource.h",
@@ -1512,7 +1558,6 @@ filegroup(
     srcs = [
         "base64.cc",
         "base64.h",
-        "casts.h",
         "cpu_feature_guard.cc",
         "cpu_feature_guard.h",
         "fingerprint.h",

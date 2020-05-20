@@ -69,9 +69,9 @@ TEST_F(RemapperTest, FusedBatchNorm) {
 }
 
 TEST_F(RemapperTest, FusedBatchNormNCHW) {
-#if !GOOGLE_CUDA
-  GTEST_SKIP() << "CUDA is not enabled";
-#endif  // !GOOGLE_CUDA
+#if !(GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
+  GTEST_SKIP() << "Neither CUDA nor ROCm is enabled";
+#endif  // !GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
   Output dflt =
       ops::Const(s.WithOpName("dflt"), {3.14f, 2.7f, 1.0f, 2.0f, 3.0f, 100.0f},
@@ -607,6 +607,7 @@ TEST_F(RemapperTest, FuseMatMulWithBiasAndActivation) {
   }
 }
 
+#ifndef INTEL_MKL
 TEST_F(RemapperTest, FuseConv2DWithBatchNorm) {
   using ops::Placeholder;
 
@@ -850,6 +851,7 @@ TEST_F(RemapperTest, FuseConv2DWithSqueezeAndBias) {
   ASSERT_EQ(tensors.size(), 1);
   test::ExpectTensorNear<float>(tensors[0], tensors_expected[0], 1e-6);
 }
+#endif
 
 }  // namespace grappler
 }  // namespace tensorflow
