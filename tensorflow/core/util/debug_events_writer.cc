@@ -122,23 +122,31 @@ DebugEventsWriter::~DebugEventsWriter() { Close().IgnoreError(); }
 
 // static
 DebugEventsWriter* DebugEventsWriter::GetDebugEventsWriter(
-    const string& dump_root, int64 circular_buffer_size) {
+    const string& dump_root, const string& tfdbg_run_id,
+    int64_t circular_buffer_size) {
   mutex_lock l(DebugEventsWriter::factory_mu_);
   std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>* writer_pool =
       DebugEventsWriter::GetDebugEventsWriterMap();
   if (writer_pool->find(dump_root) == writer_pool->end()) {
     std::unique_ptr<DebugEventsWriter> writer(
-        new DebugEventsWriter(dump_root, circular_buffer_size));
+        new DebugEventsWriter(dump_root, tfdbg_run_id, circular_buffer_size));
     writer_pool->insert(std::make_pair(dump_root, std::move(writer)));
   }
   return (*writer_pool)[dump_root].get();
 }
 
 // static
-DebugEventsWriter* DebugEventsWriter::GetDebugEventsWriter(
-    const string& dump_root) {
-  return DebugEventsWriter::GetDebugEventsWriter(dump_root,
-                                                 kDefaultCyclicBufferSize);
+Status DebugEventsWriter::LookUpDebugEventsWriter(
+    const string& dump_root, DebugEventsWriter** debug_events_writer) {
+  mutex_lock l(DebugEventsWriter::factory_mu_);
+  std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>* writer_pool =
+      DebugEventsWriter::GetDebugEventsWriterMap();
+  if (writer_pool->find(dump_root) == writer_pool->end()) {
+    return errors::FailedPrecondition(
+        "No DebugEventsWriter has been created at dump root ", dump_root);
+  }
+  *debug_events_writer = (*writer_pool)[dump_root].get();
+  return Status::OK();
 }
 
 Status DebugEventsWriter::Init() {
@@ -155,7 +163,7 @@ Status DebugEventsWriter::Init() {
                                     "Failed to create directory ", dump_root_);
   }
 
-  int64 time_in_seconds = env_->NowMicros() / 1e6;
+  int64_t time_in_seconds = env_->NowMicros() / 1e6;
   file_prefix_ = io::JoinPath(
       dump_root_, strings::Printf("%s.%010lld.%s", kFileNamePrefix,
                                   static_cast<long long>(time_in_seconds),
@@ -179,6 +187,7 @@ Status DebugEventsWriter::Init() {
   metadata->set_tensorflow_version(TF_VERSION_STRING);
   metadata->set_file_version(
       strings::Printf("%s%d", kVersionPrefix, kCurrentFormatVersion));
+  metadata->set_tfdbg_run_id(tfdbg_run_id_);
   TF_RETURN_IF_ERROR(SerializeAndWriteDebugEvent(&debug_event, METADATA));
   TF_RETURN_WITH_CONTEXT_IF_ERROR(
       metadata_writer_->Flush(), "Failed to flush debug event metadata writer");
@@ -265,7 +274,7 @@ Status DebugEventsWriter::WriteGraphExecutionTrace(
 
 Status DebugEventsWriter::WriteGraphExecutionTrace(
     const string& tfdbg_context_id, const string& device_name,
-    const string& op_name, int32 output_slot, int32 tensor_debug_mode,
+    const string& op_name, int32_t output_slot, int32_t tensor_debug_mode,
     const Tensor& tensor_value) {
   std::unique_ptr<GraphExecutionTrace> trace(new GraphExecutionTrace());
   trace->set_tfdbg_context_id(tfdbg_context_id);
@@ -394,6 +403,13 @@ string DebugEventsWriter::FileName(DebugEventFileType type) {
 }
 
 Status DebugEventsWriter::Close() {
+  {
+    mutex_lock l(initialization_mu_);
+    if (!is_initialized_) {
+      return Status::OK();
+    }
+  }
+
   std::vector<string> failed_to_close_files;
 
   if (metadata_writer_ != nullptr) {
@@ -457,9 +473,11 @@ DebugEventsWriter::GetDebugEventsWriterMap() {
 }
 
 DebugEventsWriter::DebugEventsWriter(const string& dump_root,
-                                     int64 circular_buffer_size)
+                                     const string& tfdbg_run_id,
+                                     int64_t circular_buffer_size)
     : env_(Env::Default()),
       dump_root_(dump_root),
+      tfdbg_run_id_(tfdbg_run_id),
       is_initialized_(false),
       initialization_mu_(),
       circular_buffer_size_(circular_buffer_size),

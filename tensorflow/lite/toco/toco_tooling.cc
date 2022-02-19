@@ -37,7 +37,7 @@ namespace toco {
 namespace {
 // CHECK-fails if the model contains a kUnsupported operation.
 void CheckUnsupportedOperations(const Model& model) {
-  std::set<string> unsupported_ops;
+  std::set<std::string> unsupported_ops;
   for (auto& op : model.operators) {
     if (op->type == OperatorType::kUnsupported) {
       unsupported_ops.insert(
@@ -172,7 +172,7 @@ void SetFinalDataTypeOnInputs(const TocoFlags& toco_flags, Model* model) {
   }
 
   for (int i = 0; i < model->flags.input_arrays_size(); i++) {
-    string const& array_name = model->flags.input_arrays(i).name();
+    std::string const& array_name = model->flags.input_arrays(i).name();
     auto* array = &model->GetArray(array_name);
     // Note that the notion of changing data types only applies to real-numbers
     // arrays (see the documentation for inference_input_type).
@@ -209,7 +209,7 @@ void SetFinalDataTypeOnInputs(const TocoFlags& toco_flags, Model* model) {
 
 std::unique_ptr<Model> Import(const TocoFlags& toco_flags,
                               const ModelFlags& model_flags,
-                              const string& input_file_contents) {
+                              const std::string& input_file_contents) {
   std::unique_ptr<Model> model;
   switch (toco_flags.input_format()) {
     case TENSORFLOW_GRAPHDEF: {
@@ -451,13 +451,13 @@ tensorflow::Status TransformWithStatus(const TocoFlags& toco_flags,
   CheckFinalDataTypesSatisfied(*model);
 
   // Estimate and log the number of arithmetic ops
-  int64 ops_count = 0;
+  int64_t ops_count = 0;
   if (EstimateArithmeticOpsCount(*model, &ops_count)) {
     LOG(INFO) << "Estimated count of arithmetic ops: " << ops_count
               << " ops, equivalently " << ops_count / 2 << " MACs";
   }
   model->ops_count = ops_count;
-  int64 params_count = 0;
+  int64_t params_count = 0;
 
   // Compute and log the number of parameters
   for (const auto& array_pair : model->GetArrayMap()) {
@@ -473,7 +473,8 @@ tensorflow::Status TransformWithStatus(const TocoFlags& toco_flags,
 }
 
 tensorflow::Status Export(const TocoFlags& toco_flags, const Model& model,
-                          bool allow_custom_ops, string* output_file_contents) {
+                          bool allow_custom_ops,
+                          std::string* output_file_contents) {
   switch (toco_flags.output_format()) {
     case TENSORFLOW_GRAPHDEF:
       ExportTensorFlowGraphDef(model, output_file_contents);
@@ -485,7 +486,8 @@ tensorflow::Status Export(const TocoFlags& toco_flags, const Model& model,
           toco_flags.force_select_tf_ops() || toco_flags.enable_select_tf_ops();
       params.allow_custom_ops = allow_custom_ops;
       params.allow_dynamic_tensors = toco_flags.allow_dynamic_tensors();
-
+      params.disable_per_channel =
+          toco_flags.disable_per_channel_quantization();
       if (toco_flags.post_training_quantize()) {
         if (toco_flags.quantize_to_float16()) {
           params.quantize_weights = tflite::QuantizedBufferType::FLOAT16;

@@ -30,7 +30,7 @@ SnappyInputBuffer::SnappyInputBuffer(
       next_in_(input_buffer_.get()),
       bytes_read_(0) {}
 
-Status SnappyInputBuffer::ReadNBytes(int64 bytes_to_read, tstring* result) {
+Status SnappyInputBuffer::ReadNBytes(int64_t bytes_to_read, tstring* result) {
   result->clear();
   result->resize_uninitialized(bytes_to_read);
 
@@ -56,7 +56,7 @@ Status SnappyInputBuffer::ReadNBytes(int64 bytes_to_read, tstring* result) {
   return Status::OK();
 }
 
-int64 SnappyInputBuffer::Tell() const { return bytes_read_; }
+int64_t SnappyInputBuffer::Tell() const { return bytes_read_; }
 
 Status SnappyInputBuffer::Reset() {
   file_pos_ = 0;
@@ -134,7 +134,7 @@ Status SnappyInputBuffer::ReadCompressedBlockLength(uint32* length) {
     }
     size_t readable = std::min(bytes_to_read, avail_in_);
 
-    for (int i = 0; i < readable; i++) {
+    for (size_t i = 0; i < readable; i++) {
       // The "unsigned char" type cast is intentional to avoid implicit type
       // casting of the signed char to unsigned int during bitwise OR which
       // causes weird overflow errors.

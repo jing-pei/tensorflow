@@ -25,7 +25,7 @@ namespace data {
 
 // Registers a dataset with the tf.data service.
 //
-// The address and protocol inputs are used to connect to the tf.data master.
+// The address and protocol inputs are used to connect to the dispatcher.
 // The external state policy attribute determines whether to ignore, warn, or
 // error out when the dataset contains external state.
 // The op produces a dataset id for identifying the registered dataset.
@@ -35,6 +35,9 @@ class RegisterDatasetOp : public OpKernel {
   static constexpr const char* const kProtocol = "protocol";
   static constexpr const char* const kExternalStatePolicy =
       "external_state_policy";
+  static constexpr const char* const kElementSpec = "element_spec";
+  static constexpr const char* const kMetadata = "metadata";
+  static constexpr const char* const kTimeoutMs = "timeout_ms";
 
   explicit RegisterDatasetOp(OpKernelConstruction* ctx);
 
@@ -42,6 +45,8 @@ class RegisterDatasetOp : public OpKernel {
 
  private:
   SerializationContext::ExternalStatePolicy external_state_policy_;
+  std::string element_spec_;
+  std::string serialized_metadata_;
 };
 
 }  // namespace data

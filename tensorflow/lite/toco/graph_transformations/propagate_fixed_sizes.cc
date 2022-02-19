@@ -165,11 +165,9 @@ void ProcessConvOperator(Model* model, ConvOperator* op) {
 
 void ProcessTransposeConvOperator(Model* model, TransposeConvOperator* op) {
   // TransposeConv is unique in that it is specifically given the output shape
-  // as a 1D array on it's 1st input. Theoretically then, resolving the output
-  // shape is as easy as waiting for this input to be resolved. However, we also
-  // have to calculate the padding which requires the weights shape. So, we
-  // might as well calculate the output shape and ensure it matches the
-  // specified one
+  // as a 1D array on it's 1st input. Resolving the output shape is as easy
+  // as waiting for this input to be resolved. However, we also have to
+  // calculate the padding which requires the weights shape.
 
   // SPECIFIED OUTPUT SHAPE
   // The below is the specified, or prescribed output shape, _given_ to the
@@ -183,7 +181,7 @@ void ProcessTransposeConvOperator(Model* model, TransposeConvOperator* op) {
   }
 
   CHECK(specified_output_shape_array.data_type == ArrayDataType::kInt32)
-      << "TransposeConv input_dims must be int32";
+      << "TransposeConv output_shape must be int32";
 
   CHECK(specified_output_shape_array.shape().dimensions_count() == 1 &&
         specified_output_shape_array.shape().dims(0) == 4)
@@ -268,7 +266,7 @@ void ProcessDepthwiseConvOperator(Model* model, DepthwiseConvOperator* op) {
   const auto& weights_shape = weights_array.shape();
   CHECK_EQ(weights_shape.dimensions_count(), 4);
 
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   const int input_depth = input_shape.dims(3);
   const int output_depth = weights_shape.dims(3);
   // TensorFlow doesn't define the depth_multiplier value on DepthwiseConv ops,
@@ -302,7 +300,7 @@ void ProcessDepthToSpaceOperator(Model* model, DepthToSpaceOperator* op) {
   const auto& input_shape = input_array.shape();
   CHECK_EQ(input_shape.dimensions_count(), 4);
 
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   const int block_size = op->block_size;
   CHECK_NE(block_size, 0) << "Invalid block_size in " << output_name;
   const int batch = input_shape.dims(0);
@@ -325,7 +323,7 @@ void ProcessSpaceToDepthOperator(Model* model, SpaceToDepthOperator* op) {
   const auto& input_shape = input_array.shape();
   CHECK_EQ(input_shape.dimensions_count(), 4);
 
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   const int block_size = op->block_size;
   CHECK_NE(block_size, 0) << "Invalid block_size in " << output_name;
   const int batch = input_shape.dims(0);
@@ -431,7 +429,7 @@ void ProcessTensorFlowReshapeOperator(Model* model,
   bool has_wildcard = false;
   int wildcard_index = 0;
   int product_non_wildcard_dims = 1;
-  for (int i = 0; i < shape_data.size(); i++) {
+  for (size_t i = 0; i < shape_data.size(); i++) {
     if (shape_data[i] == -1) {
       CHECK(!has_wildcard);
       has_wildcard = true;
@@ -470,7 +468,7 @@ void ProcessSimpleOperator(Model* model, Operator* op, int input_index) {
     return;
   }
 
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   auto& output_array = model->GetArray(output_name);
   if (output_array.has_shape()) {
     return;
@@ -487,7 +485,7 @@ void ProcessSimpleBinaryOperator(Model* model, Operator* op) {
   if (!input0_array.has_shape() || !input1_array.has_shape()) {
     return;
   }
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   auto& output_array = model->GetArray(output_name);
   ComputeBinaryOperatorOutputSize(input0_array.shape(), input1_array.shape(),
                                   &output_array);
@@ -574,13 +572,13 @@ void ProcessTensorFlowReductionOperator(Model* model, Operator* op) {
     std::set<int32> true_indices;
     const auto& reduction_indices =
         reduction_indices_array.GetBuffer<ArrayDataType::kInt32>().data;
-    for (int i = 0; i < reduction_indices.size(); ++i) {
-      const int32 reduction_index = reduction_indices[i];
+    for (size_t i = 0; i < reduction_indices.size(); ++i) {
+      const int32_t reduction_index = reduction_indices[i];
       if (reduction_index < -input_rank || reduction_index >= input_rank) {
         CHECK(false) << "Invalid reduction dimension " << reduction_index
                      << " for input with " << input_rank << " dimensions";
       }
-      int32 wrapped_index = reduction_index;
+      int32_t wrapped_index = reduction_index;
       if (wrapped_index < 0) {
         wrapped_index += input_rank;
       }
@@ -627,7 +625,7 @@ void ProcessSliceOperator(Model* model, SliceOperator* op) {
   CHECK_EQ(op->begin.size(), op->size.size());
 
   std::vector<int> output_dims;
-  for (int i = 0; i < op->begin.size(); ++i) {
+  for (size_t i = 0; i < op->begin.size(); ++i) {
     int size = op->size[i];
     if (size == -1) {
       size = input_array.shape().dims(i) - op->begin[i];
@@ -639,14 +637,14 @@ void ProcessSliceOperator(Model* model, SliceOperator* op) {
 }
 
 void ProcessReorderAxesOperator(Model* model, ReorderAxesOperator* op) {
-  const string& input_name = op->inputs[0];
+  const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
     return;
   }
   const auto& input_shape = input_array.shape();
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   Shape* output_shape = model->GetArray(output_name).mutable_shape();
   ShuffleDims(input_shape, op->input_axes_order, op->output_axes_order,
               output_shape);
@@ -757,7 +755,7 @@ void ProcessRangeOperator(Model* model, RangeOperator* op) {
 
 void ProcessTensorFlowSplitOperator(Model* model, TensorFlowSplitOperator* op) {
   CHECK_EQ(op->inputs.size(), 2);
-  const string& input_name = op->inputs[1];
+  const std::string& input_name = op->inputs[1];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -827,7 +825,7 @@ void ProcessTensorFlowSplitVOperator(Model* model,
       << "size_splits must be int32, int64";
   CHECK_EQ(size_shape.dimensions_count(), 1) << "size_splits must be 1-D";
 
-  std::vector<int64> size_splits_vector;
+  std::vector<int64_t> size_splits_vector;
   if (size_array.data_type == ArrayDataType::kInt32) {
     for (const auto each_size :
          size_array.GetBuffer<ArrayDataType::kInt32>().data) {
@@ -883,7 +881,7 @@ void ProcessTensorFlowSplitVOperator(Model* model,
 
   CHECK_EQ(op->outputs.size(), op->num_split);
 
-  for (int i = 0; i < op->outputs.size(); ++i) {
+  for (size_t i = 0; i < op->outputs.size(); ++i) {
     const auto& output = op->outputs[i];
     Shape output_shape = input_shape;
     (*output_shape.mutable_dims())[axis] = size_splits_vector.at(i);
@@ -892,7 +890,7 @@ void ProcessTensorFlowSplitVOperator(Model* model,
 }
 
 void ProcessAveragePoolOperator(Model* model, AveragePoolOperator* op) {
-  const string& input_name = op->inputs[0];
+  const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -900,7 +898,7 @@ void ProcessAveragePoolOperator(Model* model, AveragePoolOperator* op) {
   }
   const auto& input_shape = input_array.shape();
   CHECK_EQ(input_shape.dimensions_count(), 4);
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   const int output_depth = input_shape.dims(3);
   ComputeConvSizes(input_shape, output_depth, op->kwidth, op->kheight,
                    op->stride_width, op->stride_height, 1, 1, op->padding.type,
@@ -909,7 +907,7 @@ void ProcessAveragePoolOperator(Model* model, AveragePoolOperator* op) {
 }
 
 void ProcessMaxPoolOperator(Model* model, MaxPoolOperator* op) {
-  const string& input_name = op->inputs[0];
+  const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -917,7 +915,7 @@ void ProcessMaxPoolOperator(Model* model, MaxPoolOperator* op) {
   }
   const auto& input_shape = input_array.shape();
   CHECK_EQ(input_shape.dimensions_count(), 4);
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   const int output_depth = input_shape.dims(3);
   ComputeConvSizes(input_shape, output_depth, op->kwidth, op->kheight,
                    op->stride_width, op->stride_height, 1, 1, op->padding.type,
@@ -926,7 +924,7 @@ void ProcessMaxPoolOperator(Model* model, MaxPoolOperator* op) {
 }
 
 void ProcessL2PoolOperator(Model* model, L2PoolOperator* op) {
-  const string& input_name = op->inputs[0];
+  const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -936,7 +934,7 @@ void ProcessL2PoolOperator(Model* model, L2PoolOperator* op) {
   if (input_shape.dimensions_count() < 4) {
     LOG(FATAL) << "missing dimensions for " << input_name;
   }
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   const int output_depth = input_shape.dims(3);
   ComputeConvSizes(input_shape, output_depth, op->kwidth, op->kheight,
                    op->stride_width, op->stride_height, 1, 1, op->padding.type,
@@ -954,7 +952,7 @@ void ProcessResizeBilinearOperator(Model* model, ResizeBilinearOperator* op) {
   }
   const auto& input_data_shape = model->GetArray(op->inputs[0]).shape();
 
-  const string& output_size_name = op->inputs[1];
+  const std::string& output_size_name = op->inputs[1];
   const auto& output_size_array = model->GetArray(output_size_name);
   CHECK(output_size_array.data_type == ArrayDataType::kInt32);
   CHECK(output_size_array.has_shape());
@@ -982,7 +980,7 @@ void ProcessResizeNearestNeighborOperator(Model* model,
   }
   const auto& input_data_shape = model->GetArray(op->inputs[0]).shape();
 
-  const string& output_size_name = op->inputs[1];
+  const std::string& output_size_name = op->inputs[1];
   const auto& output_size_array = model->GetArray(output_size_name);
   CHECK(output_size_array.data_type == ArrayDataType::kInt32);
   CHECK(output_size_array.has_shape());
@@ -1514,7 +1512,7 @@ void ProcessPadOperator(Model* model, PadOperator* op) {
   std::vector<int>& dims = *output_shape.mutable_dims();
   CHECK_EQ(op->left_padding.size(), dims.size());
 
-  for (int i = 0; i < op->left_padding.size(); ++i) {
+  for (size_t i = 0; i < op->left_padding.size(); ++i) {
     dims[i] += op->left_padding[i] + op->right_padding[i];
   }
 
@@ -1540,7 +1538,7 @@ void ProcessPadV2Operator(Model* model, PadV2Operator* op) {
   std::vector<int>& dims = *output_shape.mutable_dims();
   CHECK_EQ(op->left_padding.size(), dims.size());
 
-  for (int i = 0; i < op->left_padding.size(); ++i) {
+  for (size_t i = 0; i < op->left_padding.size(); ++i) {
     dims[i] += op->left_padding[i] + op->right_padding[i];
   }
 
@@ -1683,7 +1681,7 @@ void ProcessStridedSliceOperator(Model* model, StridedSliceOperator* op) {
   CHECK_LE(op->strides.size(), num_input_axes)
       << "StridedSlice op with output \"" << op->outputs[0]
       << "\", requires no more than " << num_input_axes << " strides";
-  for (int i = 0; i < op->strides.size(); i++) {
+  for (size_t i = 0; i < op->strides.size(); i++) {
     CHECK_NE(op->strides[i], 0) << "Strides must be non-zero. Axis " << i
                                 << " has stride=" << op->strides[i] << ".";
   }
@@ -1814,7 +1812,7 @@ void ProcessTransposeOperator(Model* model, TransposeOperator* op) {
       << "Transpose permutation input " << op->inputs[1]
       << " must be same length as input dimensions";
   std::vector<int>* output_dims = output_array.mutable_shape()->mutable_dims();
-  for (int i = 0; i < perm.size(); i++) {
+  for (size_t i = 0; i < perm.size(); i++) {
     int axis = perm[i];
     CHECK_GE(axis, 0);
     CHECK_LT(axis, input_shape.dimensions_count());
@@ -1846,7 +1844,7 @@ void ProcessArgMinMaxOperator(Model* model, Op* op) {
   CHECK_EQ(RequiredBufferSizeForShape(axis_array.shape()), 1)
       << "Axis array must be scalar.";
 
-  int64 axis;
+  int64_t axis;
   if (axis_array.data_type == ArrayDataType::kInt32) {
     axis = axis_array.GetBuffer<ArrayDataType::kInt32>().data[0];
   } else {
@@ -1856,13 +1854,13 @@ void ProcessArgMinMaxOperator(Model* model, Op* op) {
   std::vector<int> output_dims;
 
   output_dims.reserve(input_dims.size() - 1);
-  for (int i = 0; i < input_dims.size(); ++i) {
-    if (i != axis) {
+  for (size_t i = 0; i < input_dims.size(); ++i) {
+    if (static_cast<int>(i) != axis) {
       output_dims.push_back(input_dims[i]);
     }
   }
 
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   auto& output_array = model->GetArray(output_name);
   if (output_array.has_shape()) {
     return;
@@ -1880,7 +1878,7 @@ void ProcessSparseToDenseOperator(Model* model, SparseToDenseOperator* op) {
   // Output should not go over four dimensions.
   CHECK_LE(output_shape_array.shape().dims(0), 4);
 
-  const string& output_name = op->outputs[0];
+  const std::string& output_name = op->outputs[0];
   Array& output_array = model->GetArray(output_name);
   if (output_array.has_shape()) return;
 
@@ -1890,14 +1888,14 @@ void ProcessSparseToDenseOperator(Model* model, SparseToDenseOperator* op) {
     *output_array.mutable_shape()->mutable_dims() =
         output_shape_array.GetBuffer<ArrayDataType::kInt32>().data;
   } else {
-    const std::vector<int64>& output_shape_data =
+    const std::vector<int64_t>& output_shape_data =
         output_shape_array.GetBuffer<ArrayDataType::kInt64>().data;
     // explicitly cast elements to int in order to avoid MSVC warnings about
     // narrowing conversion.
     std::transform(
         output_shape_data.begin(), output_shape_data.end(),
         std::back_inserter(*output_array.mutable_shape()->mutable_dims()),
-        [](const int64 dim) { return static_cast<int>(dim); });
+        [](const int64_t dim) { return static_cast<int>(dim); });
   }
 }
 
@@ -1938,7 +1936,7 @@ void ProcessTileOperator(Model* model, TensorFlowTileOperator* op) {
 
   auto* mutable_dims = output_array.mutable_shape()->mutable_dims();
   mutable_dims->resize(multiples.size());
-  for (int i = 0; i < mutable_dims->size(); ++i) {
+  for (size_t i = 0; i < mutable_dims->size(); ++i) {
     (*mutable_dims)[i] = input_shape.dims(i) * multiples[i];
   }
 }
@@ -2010,12 +2008,12 @@ void ProcessUnpackOperator(Model* model, UnpackOperator* op) {
   std::vector<int> output_dims;
 
   output_dims.reserve(input_dims.size() - 1);
-  for (int i = 0; i < input_dims.size(); ++i) {
-    if (i != op->axis) {
+  for (size_t i = 0; i < input_dims.size(); ++i) {
+    if (static_cast<int>(i) != op->axis) {
       output_dims.push_back(input_dims[i]);
     }
   }
-  for (const string& output_name : op->outputs) {
+  for (const std::string& output_name : op->outputs) {
     auto& output_array = model->GetArray(output_name);
     if (output_array.has_shape()) {
       return;
@@ -2149,7 +2147,7 @@ void ProcessScatterNdOperator(Model* model, ScatterNdOperator* op) {
   *modified = false;
   auto it = model->operators.begin() + op_index;
   auto* op = it->get();
-  std::unordered_map<string, std::vector<int>> old_output_dims;
+  std::unordered_map<std::string, std::vector<int>> old_output_dims;
   for (const auto& output : op->outputs) {
     if (model->GetArray(output).has_shape()) {
       old_output_dims[output] = model->GetArray(output).shape().dims();
@@ -2399,8 +2397,8 @@ void ProcessScatterNdOperator(Model* model, ScatterNdOperator* op) {
       if (unsupported_op->output_shapes.size() < op->outputs.size()) {
         return ::tensorflow::Status::OK();
       }
-      for (int i = 0; i < op->outputs.size(); ++i) {
-        const string& output = op->outputs[i];
+      for (size_t i = 0; i < op->outputs.size(); ++i) {
+        const std::string& output = op->outputs[i];
         model->GetArray(output).copy_shape(unsupported_op->output_shapes.at(i));
       }
       break;

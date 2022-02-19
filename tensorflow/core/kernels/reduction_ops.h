@@ -18,7 +18,6 @@ limitations under the License.
 
 // Functor definitions for Reduction ops, must be compilable by nvcc.
 
-#include <iostream>
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/tensor_types.h"
@@ -58,6 +57,29 @@ struct ReduceEigenImpl {
   }
 };
 
+// Specialization for BF16 Reducer to fix accuracy.
+// TODO: All BF16 reducers should have specializations to fix accuracy.
+#define CASTING_SPECIALIZATION(Reducer, ScalarType, IntermediateType)        \
+  template <typename Device, typename OUT_T, typename IN_T,                  \
+            typename ReductionAxes>                                          \
+  struct ReduceEigenImpl<Device, OUT_T, IN_T, ReductionAxes,                 \
+                         Reducer<ScalarType>> {                              \
+    void operator()(const Device& d, OUT_T out, IN_T in,                     \
+                    const ReductionAxes& reduction_axes,                     \
+                    const Reducer<ScalarType>& reducer) {                    \
+      static_assert(std::is_same<ScalarType, typename OUT_T::Scalar>::value, \
+                    "");                                                     \
+      Reducer<IntermediateType> intermediate_reducer;                        \
+      auto in_as_intermediate = in.template cast<IntermediateType>();        \
+      out.device(d) =                                                        \
+          in_as_intermediate.reduce(reduction_axes, intermediate_reducer)    \
+              .template cast<ScalarType>();                                  \
+    }                                                                        \
+  };
+
+CASTING_SPECIALIZATION(Eigen::internal::SumReducer, bfloat16, float);
+#undef CASTING_SPECIALIZATION
+
 template <typename Device, typename OUT_T, typename IN_T,
           typename ReductionAxes, typename Scalar>
 struct ReduceEigenImpl<Device, OUT_T, IN_T, ReductionAxes,
@@ -95,9 +117,9 @@ struct ReduceEigenImpl<Device, OUT_T, IN_T, ReductionAxes,
 CASTING_SPECIALIZATION(uint8, uint64);
 CASTING_SPECIALIZATION(uint16, uint64);
 CASTING_SPECIALIZATION(uint32, uint64);
-CASTING_SPECIALIZATION(int8, int64);
-CASTING_SPECIALIZATION(int16, int64);
-CASTING_SPECIALIZATION(int32, int64);
+CASTING_SPECIALIZATION(int8, int64_t);
+CASTING_SPECIALIZATION(int16, int64_t);
+CASTING_SPECIALIZATION(int32, int64_t);
 #undef CASTING_SPECIALIZATION
 
 // TODO(rmlarsen): Refactor this such that taking the sqrt can be optional
@@ -159,7 +181,11 @@ FIX_MEAN_IDENTITY(double)
 
 template <typename Device, typename OUT_T, typename Reducer>
 void FillIdentityEigenImpl(const Device& d, OUT_T out, const Reducer& reducer) {
-  out.device(d) = out.constant(Identity<Reducer>::identity(reducer));
+  MaybeWith32BitIndexing<Device>(
+      [&](auto out32) {
+        out32.device(d) = out32.constant(Identity<Reducer>::identity(reducer));
+      },
+      out);
 }
 
 template <typename Device, typename Reducer>

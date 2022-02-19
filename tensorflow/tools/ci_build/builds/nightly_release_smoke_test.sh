@@ -18,17 +18,28 @@
 set -e
 set -x
 
-CPU_MAX_WHL_SIZE=190M
-GPU_MAX_WHL_SIZE=510M
+# Get size check function
+source tensorflow/tools/ci_build/release/common.sh
 
 function run_smoke_test() {
-  VENV_TMP_DIR=$(mktemp -d)
 
-  ${PYTHON_BIN_PATH} -m virtualenv -p ${PYTHON_BIN_PATH} "${VENV_TMP_DIR}" || \
-      die "FAILED: Unable to create virtualenv"
+  if [[ -z "${WHL_NAME}" ]]; then
+    echo "TF WHL path not given, unable to install and test."
+    exit 1
+  fi
 
-  source "${VENV_TMP_DIR}/bin/activate" || \
-      die "FAILED: Unable to activate virtualenv "
+  # Upload the PIP package if whl test passes.
+  if [ ${IN_VENV} -eq 0 ]; then
+    VENV_TMP_DIR=$(mktemp -d)
+
+    ${PYTHON_BIN_PATH} -m pip install virtualenv
+
+    ${PYTHON_BIN_PATH} -m virtualenv -p ${PYTHON_BIN_PATH} "${VENV_TMP_DIR}" || \
+        die "FAILED: Unable to create virtualenv"
+
+    source "${VENV_TMP_DIR}/bin/activate" || \
+        die "FAILED: Unable to activate virtualenv "
+  fi
 
   # install tensorflow
   python -m pip install ${WHL_NAME} || \
@@ -39,12 +50,17 @@ function run_smoke_test() {
   test_tf_imports
 
   # Test TensorFlow whl file size
-  test_tf_whl_size
+  test_tf_whl_size ${WHL_NAME}
 
   RESULT=$?
-  # Deactivate from virtualenv.
-  deactivate || source deactivate || die "FAILED: Unable to deactivate from existing virtualenv."
-  sudo rm -rf "${KOKORO_GFILE_DIR}/venv"
+
+  # Upload the PIP package if whl test passes.
+  if [ ${IN_VENV} -eq 0 ]; then
+    # Deactivate from virtualenv.
+    deactivate || source deactivate || die "FAILED: Unable to deactivate from existing virtualenv."
+    sudo rm -rf "${KOKORO_GFILE_DIR}/venv"
+  fi
+
   return $RESULT
 }
 
@@ -62,7 +78,7 @@ function test_tf_imports() {
 
   # test basic keras is available
   RET_VAL=$(python -c "import tensorflow as tf; print(tf.keras.__name__)")
-  if ! [[ ${RET_VAL} == *'tensorflow.keras'* ]]; then
+  if ! [[ ${RET_VAL} == *'keras.api'* ]]; then
     echo "Unexpected return value: ${RET_VALUE}"
     echo "PIP test on virtualenv FAILED, will not upload ${WHL_NAME} package."
     return 1
@@ -78,37 +94,21 @@ function test_tf_imports() {
 
   RESULT=$?
 
+  # TODO(b/210940071): Debug import order. Ignore returned errors.
+  set +e
+  python -m pip install google-cloud-bigquery
+  $(python -c "from google.cloud.bigquery_v2 import types; import tensorflow")
+  $(python -c "import tensorflow; from google.cloud.bigquery_v2 import types")
+  set -e
+
   popd
   return $RESULT
-}
-
-function test_tf_whl_size() {
-  # We do not need a separate check for MacOS regular binaries.
-  # We check for the `_cpu` string in the whl file name.
-  if [[ "$WHL_NAME" == *"_cpu"* ]]; then
-    # Check CPU whl size.
-    if [[ $(find $WHL_NAME -type f -size +${CPU_MAX_WHL_SIZE}) ]]; then
-      echo "The CPU whl size has exceeded ${CPU_MAX_WHL_SIZE}MB. To keep
-within pypi's CDN distribution limit, we must not exceed that threshold."
-      return 1
-    fi
-  else
-    # Check GPU whl size.
-    if [[ $(find $WHL_NAME -type f -size +${GPU_MAX_WHL_SIZE}) ]]; then
-      echo "The GPU whl size has exceeded ${GPU_MAX_WHL_SIZE}MB. To keep
-within pypi's CDN distribution limit, we must not exceed that threshold."
-      return 1
-    fi
-  fi
 }
 
 ###########################################################################
 # Main
 ###########################################################################
-if [[ -z "${1}" ]]; then
-  echo "TF WHL path not given, unable to install and test."
-  return 1
-fi
 
+IN_VENV=$(python -c 'import sys; print("1" if sys.version_info.major == 3 and sys.prefix != sys.base_prefix else "0")')
 WHL_NAME=${1}
 run_smoke_test

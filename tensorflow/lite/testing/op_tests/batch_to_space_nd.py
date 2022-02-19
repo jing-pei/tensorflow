@@ -13,10 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 """Test configs for batch_to_space_nd."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 import tensorflow.compat.v1 as tf
 from tensorflow.lite.testing.zip_test_utils import create_tensor_data
@@ -36,6 +32,7 @@ def make_batch_to_space_nd_tests(options):
           "crops": [[[0, 0], [0, 0]], [[1, 1], [1, 1]]],
           "constant_block_shape": [True, False],
           "constant_crops": [True, False],
+          "dynamic_range_quantize": [False],
       },
       # Single batch (no-op)
       {
@@ -45,6 +42,7 @@ def make_batch_to_space_nd_tests(options):
           "crops": [[[0, 0], [0, 0]], [[1, 1], [1, 1]]],
           "constant_block_shape": [True],
           "constant_crops": [True],
+          "dynamic_range_quantize": [True, False],
       },
       # 3D use case.
       {
@@ -54,6 +52,7 @@ def make_batch_to_space_nd_tests(options):
           "crops": [[[0, 0]], [[1, 1]]],
           "constant_block_shape": [True],
           "constant_crops": [True],
+          "dynamic_range_quantize": [True, False],
       },
   ]
 
@@ -66,6 +65,7 @@ def make_batch_to_space_nd_tests(options):
         "crops": [[[0, 0], [0, 0], [0, 0]]],
         "constant_block_shape": [True, False],
         "constant_crops": [True, False],
+        "dynamic_range_quantize": [False],
     }]
 
   def build_graph(parameters):

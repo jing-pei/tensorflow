@@ -14,10 +14,6 @@
 # ==============================================================================
 """Tests for Keras composite tensor support."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from absl.testing import parameterized
 
 import numpy as np
@@ -325,7 +321,7 @@ def prepare_inputs(data, use_dict, use_dataset, action, input_name):
 @keras_parameterized.run_with_all_model_types
 @keras_parameterized.run_all_keras_modes
 @parameterized.named_parameters(
-    *test_util.generate_combinations_with_testcase_name(
+    *testing_utils.generate_combinations_with_testcase_name(
         use_dict=[True, False],
         use_dataset=[True, False],
         action=["predict", "evaluate", "fit"]))
@@ -490,7 +486,7 @@ class ScipySparseTensorInputTest(keras_parameterized.TestCase,
 @keras_parameterized.run_with_all_model_types
 @keras_parameterized.run_all_keras_modes
 @parameterized.named_parameters(
-    *test_util.generate_combinations_with_testcase_name(
+    *testing_utils.generate_combinations_with_testcase_name(
         use_dict=[True, False],
         use_dataset=[True, False],
         action=["predict", "evaluate", "fit"]))
@@ -506,7 +502,8 @@ class RaggedTensorInputTest(keras_parameterized.TestCase,
     model_input = input_layer.Input(
         shape=(None, None), ragged=True, name=input_name, dtype=dtypes.int32,
         batch_size=2)
-    self.assertIsInstance(model_input, ragged_tensor.RaggedTensor)
+    self.assertIsInstance(model_input._type_spec,
+                          ragged_tensor.RaggedTensorSpec)
     self.assertEqual(model_input.shape.as_list(), [2, None, None])
     layers = [ToDense(default_value=-1)]
     model = get_model_from_layers_with_input(layers, model_input=model_input)
@@ -536,7 +533,7 @@ class RaggedTensorInputTest(keras_parameterized.TestCase,
 @keras_parameterized.run_with_all_model_types
 @keras_parameterized.run_all_keras_modes
 @parameterized.named_parameters(
-    *test_util.generate_combinations_with_testcase_name(
+    *testing_utils.generate_combinations_with_testcase_name(
         use_dict=[True, False], use_dataset=[True, False]))
 class RaggedTensorInputValidationTest(keras_parameterized.TestCase,
                                       test_util.TensorFlowTestCase):

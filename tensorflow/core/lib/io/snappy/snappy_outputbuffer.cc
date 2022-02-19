@@ -19,8 +19,8 @@ namespace tensorflow {
 namespace io {
 
 SnappyOutputBuffer::SnappyOutputBuffer(WritableFile* file,
-                                       int32 input_buffer_bytes,
-                                       int32 output_buffer_bytes)
+                                       int32_t input_buffer_bytes,
+                                       int32_t output_buffer_bytes)
     : file_(file),
       input_buffer_(new char[input_buffer_bytes]),
       input_buffer_capacity_(input_buffer_bytes),
@@ -40,7 +40,7 @@ SnappyOutputBuffer::~SnappyOutputBuffer() {
 
 Status SnappyOutputBuffer::Append(StringPiece data) { return Write(data); }
 
-#if defined(PLATFORM_GOOGLE)
+#if defined(TF_CORD_SUPPORT)
 Status SnappyOutputBuffer::Append(const absl::Cord& cord) {
   for (absl::string_view fragment : cord.Chunks()) {
     TF_RETURN_IF_ERROR(Append(fragment));
@@ -63,7 +63,7 @@ Status SnappyOutputBuffer::Sync() {
   return file_->Sync();
 }
 
-Status SnappyOutputBuffer::Tell(int64* position) {
+Status SnappyOutputBuffer::Tell(int64_t* position) {
   return file_->Tell(position);
 }
 
@@ -76,7 +76,7 @@ Status SnappyOutputBuffer::Write(StringPiece data) {
 
   // If there is sufficient free space in input_buffer_ to fit data we
   // add it there and return.
-  if (bytes_to_write <= AvailableInputSpace()) {
+  if (static_cast<int32>(bytes_to_write) <= AvailableInputSpace()) {
     AddToInputBuffer(data);
     return Status::OK();
   }
@@ -87,7 +87,7 @@ Status SnappyOutputBuffer::Write(StringPiece data) {
   TF_RETURN_IF_ERROR(DeflateBuffered());
 
   // input_buffer_ should be empty at this point.
-  if (bytes_to_write <= AvailableInputSpace()) {
+  if (static_cast<int32>(bytes_to_write) <= AvailableInputSpace()) {
     AddToInputBuffer(data);
     return Status::OK();
   }
@@ -139,12 +139,12 @@ void SnappyOutputBuffer::AddToInputBuffer(StringPiece data) {
   // If it doesn't fit we free the space at the head of the stream and then
   // append `data` at the end of existing data.
 
-  const int32 read_bytes = next_in_ - input_buffer_.get();
-  const int32 unread_bytes = avail_in_;
-  const int32 free_tail_bytes =
+  const int32_t read_bytes = next_in_ - input_buffer_.get();
+  const int32_t unread_bytes = avail_in_;
+  const int32_t free_tail_bytes =
       input_buffer_capacity_ - (read_bytes + unread_bytes);
 
-  if (bytes_to_write > free_tail_bytes) {
+  if (static_cast<int32>(bytes_to_write) > free_tail_bytes) {
     memmove(input_buffer_.get(), next_in_, avail_in_);
     next_in_ = input_buffer_.get();
   }

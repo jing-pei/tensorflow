@@ -43,8 +43,13 @@ limitations under the License.
 #include "tensorflow/lite/delegates/gpu/common/data_type.h"
 #include "tensorflow/lite/delegates/gpu/common/status.h"
 #include "tensorflow/lite/delegates/gpu/common/util.h"
+#include "vulkan/vulkan.h"  // from @vulkan_headers
+
+#define GL_NO_PROTOTYPES
+#define EGL_NO_PROTOTYPES
 #include "tensorflow/lite/delegates/gpu/gl/portable_gl31.h"
-#include <vulkan/vulkan.h>
+#undef GL_NO_PROTOTYPES
+#undef EGL_NO_PROTOTYPES
 
 namespace tflite {
 namespace gpu {
@@ -71,6 +76,8 @@ enum class ObjectType {
   CPU_MEMORY,
   OPENCL_TEXTURE,
   OPENCL_BUFFER,
+  VULKAN_BUFFER,
+  VULKAN_TEXTURE
 };
 
 struct OpenGlBuffer {
@@ -104,11 +111,37 @@ struct OpenClTexture {
   // TODO(akulik): should it specify texture format?
 };
 
+struct VulkanBuffer {
+  VulkanBuffer() = default;
+  explicit VulkanBuffer(VkBuffer buffer_, VkDeviceSize size_,
+                        VkDeviceMemory memory_, VkDeviceSize offset_)
+      : buffer(buffer_), size(size_), memory(memory_), offset(offset_) {}
+
+  VkBuffer buffer;
+  VkDeviceSize size;
+  VkDeviceMemory memory;
+  VkDeviceSize offset;
+};
+
+struct VulkanTexture {
+  VulkanTexture() = default;
+  explicit VulkanTexture(VkDeviceMemory new_memory) : memory(new_memory) {}
+
+  VkImage image;
+  VkImageView image_view;
+  VkFormat format;
+  VkExtent3D extent;
+  VkDeviceMemory memory;
+  VkDeviceSize offset;
+};
+
 struct VulkanMemory {
   VulkanMemory() = default;
   explicit VulkanMemory(VkDeviceMemory new_memory) : memory(new_memory) {}
 
   VkDeviceMemory memory;
+  VkDeviceSize size;
+  VkDeviceSize offset;
 };
 
 struct CpuMemory {
@@ -195,8 +228,9 @@ bool IsValid(const TensorObjectDef& def);
 // @return the number of elements in a tensor object.
 uint32_t NumElements(const TensorObjectDef& def);
 
-using TensorObject = absl::variant<absl::monostate, OpenGlBuffer, OpenGlTexture,
-                                   CpuMemory, OpenClBuffer, OpenClTexture>;
+using TensorObject =
+    absl::variant<absl::monostate, OpenGlBuffer, OpenGlTexture, CpuMemory,
+                  OpenClBuffer, OpenClTexture, VulkanBuffer, VulkanTexture>;
 
 // @return true if object is set and corresponding values are defined.
 bool IsValid(const TensorObjectDef& def, const TensorObject& object);
@@ -205,6 +239,10 @@ ObjectType GetType(const TensorObject& object);
 
 // @return true if corresponding object is set for the given type
 bool IsObjectPresent(ObjectType type, const TensorObject& obj);
+
+// @return true if corresponding object has already been initialized and
+// assigned with a specific ObjectType.
+bool IsObjectInitialized(const TensorObject& obj);
 
 class InferenceRunner;
 
@@ -330,7 +368,7 @@ struct InferenceOptions {
 };
 
 // Returns a position number for the priority. If priority is missing,
-// then it it would return 'max num priorities + 1'.
+// then it would return 'max num priorities + 1'.
 int GetPosition(const InferenceOptions& options, InferencePriority p);
 
 // Return true if options are valid.

@@ -1,15 +1,12 @@
 """Loads the cpuinfo library, used by XNNPACK."""
 
-load("//third_party:repo.bzl", "third_party_http_archive")
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 def repo():
-    third_party_http_archive(
+    tf_http_archive(
         name = "cpuinfo",
-        strip_prefix = "cpuinfo-0cc563acb9baac39f2c1349bc42098c4a1da59e3",
-        sha256 = "80625d0b69a3d69b70c2236f30db2c542d0922ccf9bb51a61bc39c49fac91a35",
-        urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/pytorch/cpuinfo/archive/0cc563acb9baac39f2c1349bc42098c4a1da59e3.tar.gz",
-            "https://github.com/pytorch/cpuinfo/archive/0cc563acb9baac39f2c1349bc42098c4a1da59e3.tar.gz",
-        ],
-        build_file = "//third_party/cpuinfo:BUILD.bazel",
+        strip_prefix = "cpuinfo-5916273f79a21551890fd3d56fc5375a78d1598d",
+        sha256 = "2a160c527d3c58085ce260f34f9e2b161adc009b34186a2baf24e74376e89e6d",
+        urls = tf_mirror_urls("https://github.com/pytorch/cpuinfo/archive/5916273f79a21551890fd3d56fc5375a78d1598d.zip"),
+        build_file = "//third_party/cpuinfo:cpuinfo.BUILD",
     )

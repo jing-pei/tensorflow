@@ -23,7 +23,7 @@ namespace {
 class PhiGraphTest : public ::testing::Test {
  protected:
   HloValue NewHloValue(bool is_phi) {
-    static int64 id = 0;
+    static int64_t id = 0;
     return HloValue(id++, dummy_inst_.get(), {}, is_phi);
   }
 
@@ -80,6 +80,31 @@ TEST_F(PhiGraphTest, CircularPhi) {
   EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(A.id()));
   EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(B.id()));
   EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(C.id()));
+}
+
+TEST_F(PhiGraphTest, NestedPhiReduction) {
+  // def A = phi(B, C)
+  // def B = phi(C, E)
+  // def C = phi(A, B)
+  // def D = non-phi
+  // def E = Phi(D, D)
+  // 1. Replace E with D
+  // 2. Replace A B and C with E/D
+  PhiGraph phi_graph;
+  HloValue A = NewHloValue(true);
+  HloValue B = NewHloValue(true);
+  HloValue C = NewHloValue(true);
+  HloValue D = NewHloValue(false);
+  HloValue E = NewHloValue(true);
+  phi_graph.RegisterPhi(A, {&B, &C});
+  phi_graph.RegisterPhi(B, {&E, &C});
+  phi_graph.RegisterPhi(C, {&A, &B});
+  phi_graph.RegisterPhi(E, {&D, &D});
+  phi_graph.Optimize();
+  EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(A.id()));
+  EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(B.id()));
+  EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(C.id()));
+  EXPECT_EQ(D.id(), phi_graph.FindOptimizedValue(E.id()));
 }
 
 }  // namespace

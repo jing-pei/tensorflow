@@ -24,7 +24,6 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/kernels/fill_functor.h"
-#include "tensorflow/core/kernels/scatter_nd_op.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/util.h"
@@ -37,7 +36,7 @@ class OpKernelContext;
 
 namespace scatter_nd_op {
 
-enum class UpdateOp { ASSIGN, ADD, SUB };
+enum class UpdateOp { ASSIGN, ADD, SUB, MIN, MAX };
 
 }  // namespace scatter_nd_op
 

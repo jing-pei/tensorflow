@@ -30,7 +30,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
-#include "tensorflow/core/platform/types.h"
+#include "tensorflow/stream_executor/lib/statusor.h"
 
 namespace xla {
 namespace {
@@ -56,7 +56,7 @@ HloComputation* ConditionalSimplifierTest::MakeConditional(HloModule* module,
         true_computation_builder.AddInstruction(HloInstruction::CreateParameter(
             0, ShapeUtil::MakeShape(S32, {}), "param"));
     auto one = true_computation_builder.AddInstruction(
-        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32>(1)));
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(1)));
 
     true_computation_builder.AddInstruction(HloInstruction::CreateBinary(
         ShapeUtil::MakeShape(S32, {}), HloOpcode::kAdd, param, one));
@@ -74,7 +74,7 @@ HloComputation* ConditionalSimplifierTest::MakeConditional(HloModule* module,
         HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(S32, {}),
                                         "param"));
     auto forty_two = false_computation_builder.AddInstruction(
-        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32>(42)));
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(42)));
 
     false_computation_builder.AddInstruction(HloInstruction::CreateBinary(
         ShapeUtil::MakeShape(S32, {}), HloOpcode::kAdd, param, forty_two));
@@ -90,7 +90,7 @@ HloComputation* ConditionalSimplifierTest::MakeConditional(HloModule* module,
   auto false_param = builder.AddInstruction(HloInstruction::CreateParameter(
       0, ShapeUtil::MakeShape(S32, {}), "false_param"));
   auto one = builder.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32>(1)));
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(1)));
 
   builder.AddInstruction(HloInstruction::CreateConditional(
       ShapeUtil::MakeShape(S32, {}), false_instrn, one, true_computation,
@@ -198,32 +198,26 @@ ENTRY main {
   c1_1 = f32[40,40] parameter(3)
   p = pred[] parameter(4)
   t = (f32[20,40], f32[40,40], f32[20,40], f32[40,40]) tuple(c0_0, c0_1, c1_0, c1_1)
-  ROOT result = (f32[20, 40]) conditional(p,t,t), false_computation=on_false, true_computation=on_true
+  call = (f32[20,40]) call(t), to_apply=on_true
+  ROOT result = (f32[20,40]) conditional(p,t,t), false_computation=on_false, true_computation=on_true
 }
 )";
   auto status = ParseAndReturnVerifiedModule(hlo_string);
   TF_ASSERT_OK(status.status());
+  std::unique_ptr<HloModule> module = status.ConsumeValueOrDie();
   HloVerifier v(/*layout_sensitive=*/false, /*allow_mixed_precision=*/false);
-  TF_ASSERT_OK(v.Run(status.ValueOrDie().get()).status());
-  EXPECT_TRUE(
-      ConditionalSimplifier().Run(status.ValueOrDie().get()).ValueOrDie());
-  TF_ASSERT_OK(v.Run(status.ValueOrDie().get()).status());
-  EXPECT_EQ(status.ValueOrDie()
-                ->entry_computation()
-                ->root_instruction()
-                ->operand(1)
-                ->shape()
-                .tuple_shapes()
-                .size(),
-            2);
-  EXPECT_EQ(status.ValueOrDie()
-                ->entry_computation()
-                ->root_instruction()
-                ->operand(2)
-                ->shape()
-                .tuple_shapes()
-                .size(),
-            2);
+  TF_ASSERT_OK(v.Run(module.get()).status());
+  EXPECT_TRUE(ConditionalSimplifier().Run(module.get()).ValueOrDie());
+  TF_ASSERT_OK(v.Run(module.get()).status());
+  HloInstruction* conditional = module->entry_computation()->root_instruction();
+  EXPECT_TRUE(conditional != nullptr);
+  EXPECT_EQ(conditional->operand(1)->shape().tuple_shapes().size(), 2);
+  EXPECT_EQ(conditional->operand(2)->shape().tuple_shapes().size(), 2);
+  // For the call operation, nothing should have changed.
+  HloInstruction* call = FindInstruction(module.get(), "call");
+  EXPECT_EQ(
+      call->to_apply()->parameter_instruction(0)->shape().tuple_shapes().size(),
+      4);
 }
 
 TEST_F(ConditionalSimplifierTest,
@@ -486,6 +480,40 @@ ENTRY main {
       FindInstruction(status.ValueOrDie().get(), "gte.1");
   EXPECT_EQ(gte_0->tuple_index(), 0);
   EXPECT_EQ(gte_1->tuple_index(), 0);
+}
+
+// Since select can only be used on arrays, use after-all for token types.
+TEST_F(ConditionalSimplifierTest, SimplifyConditionalWithTokens) {
+  absl::string_view hlo_string =
+      R"(
+HloModule SimplifyConditionalWithTokens
+
+true_comp {
+  ROOT parameter.13 = (token[]) parameter(0)
+}
+
+false_comp {
+  ROOT parameter.21 = (token[]) parameter(0)
+}
+
+ENTRY entry {
+  parameter.29 = pred[] parameter(0)
+  token.1 = token[] after-all()
+  token.2 = token[] after-all()
+  tuple.3 = (token[]) tuple(token.1)
+  tuple.4 = (token[]) tuple(token.2)
+  ROOT conditional.5 = (token[]) conditional(parameter.29, tuple.3, tuple.4), true_computation=true_comp, false_computation=false_comp
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloVerifier v(/*layout_sensitive=*/false, /*allow_mixed_precision=*/false);
+  TF_ASSERT_OK(v.Run(module.get()).status());
+  EXPECT_TRUE(ConditionalSimplifier().Run(module.get()).ValueOrDie());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::AfterAll(
+                  op::GetTupleElement(op::Tuple(op::AfterAll()), 0),
+                  op::GetTupleElement(op::Tuple(op::AfterAll()), 0))));
 }
 
 }  // namespace

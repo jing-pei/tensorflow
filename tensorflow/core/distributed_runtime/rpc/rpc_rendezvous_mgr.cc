@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "tensorflow/core/distributed_runtime/rpc/rpc_rendezvous_mgr.h"
 
-#include <unordered_set>
-
 #include "tensorflow/core/common_runtime/device.h"
 #include "tensorflow/core/common_runtime/device_mgr.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
@@ -31,6 +29,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/notification.h"
 #include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
@@ -39,7 +38,7 @@ namespace {
 
 class RpcRemoteRendezvous : public BaseRemoteRendezvous {
  public:
-  RpcRemoteRendezvous(const WorkerEnv* env, int64 step_id)
+  RpcRemoteRendezvous(const WorkerEnv* env, int64_t step_id)
       : BaseRemoteRendezvous(env, step_id) {}
 
  protected:
@@ -58,7 +57,7 @@ class RpcRecvTensorCall : public BaseRecvTensorCall {
  public:
   RpcRecvTensorCall() : wi_(nullptr), dst_device_(nullptr) {}
 
-  void Init(WorkerInterface* wi, int64 step_id, StringPiece key,
+  void Init(WorkerInterface* wi, int64_t step_id, StringPiece key,
             AllocatorAttributes alloc_attrs, Device* dst_device,
             const Rendezvous::Args& recv_args, Rendezvous::DoneCallback done) {
     wi_ = wi;
@@ -136,7 +135,12 @@ class RpcRecvTensorCall : public BaseRecvTensorCall {
   // Start the main RecvTensor call, checking for an async abort.
   void StartRTCall(std::function<void()> recv_done) {
     resp_.InitAlloc(dst_device_, alloc_attrs_);
-    auto cb = [this, recv_done = std::move(recv_done)](const Status& s) {
+    auto abort_checked = std::make_shared<Notification>();
+    auto cb = [this, abort_checked,
+               recv_done = std::move(recv_done)](const Status& s) {
+      // Make sure the Rendezvous abort checking is finished before running the
+      // callback, which might destroy the current call object.
+      abort_checked->WaitForNotification();
       if (!s.ok()) {
         mutex_lock l(mu_);
         status_.Update(s);
@@ -158,6 +162,8 @@ class RpcRecvTensorCall : public BaseRecvTensorCall {
     if (!s.ok()) {
       opts_.StartCancel();
     }
+    // Notify that the abort check has finished.
+    abort_checked->Notify();
   }
 
   string src_worker_;
@@ -264,11 +270,12 @@ void RpcRemoteRendezvous::RecvFromRemoteAsync(
   call->Init(rwi, step_id_, parsed.FullKey(), recv_args.alloc_attrs, dst_device,
              recv_args, std::move(done));
 
-  // Record "call" in active_ so that it can be aborted cleanly.
+  // Record "call" in calls_ so that it can be aborted cleanly.
   RegisterCall(call, recv_args);
 
   // RendezvousMgr already aborted, shouldn't send RPC call any more
   if (!call->status().ok()) {
+    DeregisterCall(call, recv_args);
     // NOTE: `*sess` can potentially be deleted before we return from
     // `call->done()(...)`, so we must release the worker before calling the
     // callback.
@@ -280,9 +287,9 @@ void RpcRemoteRendezvous::RecvFromRemoteAsync(
 
   // Start "call".
   Ref();
-  call->Start([this, call, worker_cache]() {
-    // Removes "call" from active_. Prevent StartAbort().
-    DeregisterCall(call);
+  call->Start([this, call, recv_args, worker_cache]() {
+    // Removes "call" from calls_. Prevent StartAbort().
+    DeregisterCall(call, recv_args);
     // If StartAbort was called prior to DeregisterCall, then the
     // current status should be bad.
     Status s = call->status();
@@ -301,7 +308,7 @@ void RpcRemoteRendezvous::RecvFromRemoteAsync(
 RpcRendezvousMgr::RpcRendezvousMgr(const WorkerEnv* env)
     : BaseRendezvousMgr(env) {}
 
-BaseRemoteRendezvous* RpcRendezvousMgr::Create(int64 step_id,
+BaseRemoteRendezvous* RpcRendezvousMgr::Create(int64_t step_id,
                                                const WorkerEnv* worker_env) {
   return new RpcRemoteRendezvous(worker_env, step_id);
 }

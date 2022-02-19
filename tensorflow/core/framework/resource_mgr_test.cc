@@ -26,8 +26,10 @@ limitations under the License.
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/platform/regexp.h"
 #include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/protobuf/error_codes.pb.h"
 
 namespace tensorflow {
 
@@ -76,8 +78,10 @@ string LookupOrCreate(ResourceMgr* rm, const string& container,
   return ret;
 }
 
-static void HasError(const Status& s, const string& substr) {
-  EXPECT_TRUE(absl::StrContains(s.ToString(), substr))
+static void HasError(const Status& s, const error::Code code,
+                     const string& substr) {
+  EXPECT_EQ(s.code(), code);
+  EXPECT_TRUE(absl::StrContains(s.error_message(), substr))
       << s << ", expected substring " << substr;
 }
 
@@ -98,7 +102,7 @@ TEST(ResourceMgrTest, Basic) {
 
   // Expected to fail.
   HasError(rm.Create("foo", "bar", new Resource("kitty")),
-           "Already exists: Resource foo/bar");
+           error::ALREADY_EXISTS, "Resource foo/bar");
 
   // Expected to be found.
   EXPECT_EQ("R/cat", Find<Resource>(rm, "foo", "bar"));
@@ -106,27 +110,105 @@ TEST(ResourceMgrTest, Basic) {
   EXPECT_EQ("O/tiger", Find<Other>(rm, "foo", "bar"));
 
   // Expected to be not found.
-  HasError(FindErr<Resource>(rm, "bar", "foo"), "Not found: Container bar");
-  HasError(FindErr<Resource>(rm, "foo", "xxx"), "Not found: Resource foo/xxx");
-  HasError(FindErr<Other>(rm, "foo", "baz"), "Not found: Resource foo/baz");
+  HasError(FindErr<Resource>(rm, "bar", "foo"), error::NOT_FOUND,
+           "Container bar");
+  HasError(FindErr<Resource>(rm, "foo", "xxx"), error::NOT_FOUND,
+           "Resource foo/xxx");
+  HasError(FindErr<Other>(rm, "foo", "baz"), error::NOT_FOUND,
+           "Resource foo/baz");
 
   // Delete foo/bar/Resource.
   TF_CHECK_OK(rm.Delete<Resource>("foo", "bar"));
-  HasError(FindErr<Resource>(rm, "foo", "bar"), "Not found: Resource foo/bar");
+  HasError(FindErr<Resource>(rm, "foo", "bar"), error::NOT_FOUND,
+           "Resource foo/bar");
+  // Deleting foo/bar/Resource a second time is not OK.
+  HasError(rm.Delete<Resource>("foo", "bar"), error::NOT_FOUND,
+           "Resource foo/bar");
 
   TF_CHECK_OK(rm.Create("foo", "bar", new Resource("kitty")));
   EXPECT_EQ("R/kitty", Find<Resource>(rm, "foo", "bar"));
 
   // Drop the whole container foo.
   TF_CHECK_OK(rm.Cleanup("foo"));
-  HasError(FindErr<Resource>(rm, "foo", "bar"), "Not found: Container foo");
+  HasError(FindErr<Resource>(rm, "foo", "bar"), error::NOT_FOUND,
+           "Container foo");
 
   // Dropping it a second time is OK.
   TF_CHECK_OK(rm.Cleanup("foo"));
-  HasError(FindErr<Resource>(rm, "foo", "bar"), "Not found: Container foo");
+  HasError(FindErr<Resource>(rm, "foo", "bar"), error::NOT_FOUND,
+           "Container foo");
 
   // Dropping a non-existent container is also ok.
   TF_CHECK_OK(rm.Cleanup("bar"));
+}
+
+TEST(ResourceMgrTest, CreateUnowned) {
+  core::RefCountPtr<Resource> cat{new Resource("cat")};
+  core::RefCountPtr<Resource> kitty{new Resource("kitty")};
+
+  ASSERT_TRUE(cat->RefCountIsOne());
+  ASSERT_TRUE(kitty->RefCountIsOne());
+
+  ResourceMgr rm;
+
+  TF_CHECK_OK(rm.CreateUnowned("foo", "bar", cat.get()));
+  EXPECT_TRUE(cat->RefCountIsOne());
+
+  // Expected to fail.
+  HasError(rm.CreateUnowned("foo", "bar", kitty.get()), error::ALREADY_EXISTS,
+           "Resource foo/bar");
+  EXPECT_TRUE(kitty->RefCountIsOne());
+
+  // Expected to be found.
+  EXPECT_EQ("R/cat", Find<Resource>(rm, "foo", "bar"));
+
+  // Expected to be not found.
+  HasError(FindErr<Resource>(rm, "bar", "foo"), error::NOT_FOUND,
+           "Container bar");
+  HasError(FindErr<Resource>(rm, "foo", "xxx"), error::NOT_FOUND,
+           "Resource foo/xxx");
+
+  // Deleting foo/bar/Resource is not OK because it is not owned by the manager.
+  HasError(rm.Delete<Resource>("foo", "bar"), error::INTERNAL,
+           "Cannot delete an unowned Resource foo/bar");
+
+  TF_CHECK_OK(rm.CreateUnowned("foo", "bar", kitty.get()));
+  EXPECT_TRUE(kitty->RefCountIsOne());
+  EXPECT_EQ("R/kitty", Find<Resource>(rm, "foo", "bar"));
+
+  {
+    core::RefCountPtr<Resource> dog{new Resource("dog")};
+    TF_CHECK_OK(rm.CreateUnowned("foo", "bark", dog.get()));
+    EXPECT_EQ("R/dog", Find<Resource>(rm, "foo", "bark"));
+    EXPECT_EQ(1, dog->WeakRefCount());
+    {
+      ResourceMgr rm1;
+      TF_CHECK_OK(rm1.CreateUnowned("foo", "bark", dog.get()));
+      EXPECT_EQ("R/dog", Find<Resource>(rm1, "foo", "bark"));
+      EXPECT_EQ(2, dog->WeakRefCount());
+    }
+    // If manager goes out of scope, the resource loses the weak ref.
+    EXPECT_EQ(1, dog->WeakRefCount());
+  }
+  // If resource goes out of scope, the look up reports not found.
+  HasError(FindErr<Resource>(rm, "foo", "bark"), error::NOT_FOUND,
+           "Resource foo/bark");
+
+  // Drop the whole container foo.
+  TF_CHECK_OK(rm.Cleanup("foo"));
+  HasError(FindErr<Resource>(rm, "foo", "bar"), error::NOT_FOUND,
+           "Container foo");
+
+  // Dropping it a second time is OK.
+  TF_CHECK_OK(rm.Cleanup("foo"));
+  HasError(FindErr<Resource>(rm, "foo", "bar"), error::NOT_FOUND,
+           "Container foo");
+
+  // Dropping a non-existent container is also ok.
+  TF_CHECK_OK(rm.Cleanup("bar"));
+
+  EXPECT_TRUE(cat->RefCountIsOne());
+  EXPECT_TRUE(kitty->RefCountIsOne());
 }
 
 TEST(ResourceMgrTest, CreateOrLookup) {
@@ -138,7 +220,8 @@ TEST(ResourceMgrTest, CreateOrLookup) {
   EXPECT_EQ("O/tiger", LookupOrCreate<Other>(&rm, "foo", "bar", "tiger"));
   EXPECT_EQ("O/tiger", LookupOrCreate<Other>(&rm, "foo", "bar", "lion"));
   TF_CHECK_OK(rm.Delete<Other>("foo", "bar"));
-  HasError(FindErr<Other>(rm, "foo", "bar"), "Not found: Resource foo/bar");
+  HasError(FindErr<Other>(rm, "foo", "bar"), error::NOT_FOUND,
+           "Resource foo/bar");
 }
 
 TEST(ResourceMgrTest, CreateOrLookupRaceCondition) {
@@ -218,16 +301,19 @@ Status WrongPolicy(const string& attr_container, const string& attr_shared_name,
 
 TEST(ContainerInfo, Error) {
   // Missing attribute.
-  HasError(WrongPolicy("none", "", false), "No attr");
-  HasError(WrongPolicy("", "none", false), "No attr");
-  HasError(WrongPolicy("none", "none", false), "No attr");
+  HasError(WrongPolicy("none", "", false), error::NOT_FOUND, "No attr");
+  HasError(WrongPolicy("", "none", false), error::NOT_FOUND, "No attr");
+  HasError(WrongPolicy("none", "none", false), error::NOT_FOUND, "No attr");
 
   // Invalid container.
-  HasError(WrongPolicy("12$%", "", false), "container contains invalid char");
-  HasError(WrongPolicy("-cat", "", false), "container contains invalid char");
+  HasError(WrongPolicy("12$%", "", false), error::INVALID_ARGUMENT,
+           "container contains invalid char");
+  HasError(WrongPolicy("-cat", "", false), error::INVALID_ARGUMENT,
+           "container contains invalid char");
 
   // Invalid shared name.
-  HasError(WrongPolicy("", "_foo", false), "shared_name cannot start with '_'");
+  HasError(WrongPolicy("", "_foo", false), error::INVALID_ARGUMENT,
+           "shared_name cannot start with '_'");
 }
 
 // Stub DeviceBase subclass which only sets a device name, for testing resource
@@ -281,6 +367,36 @@ TEST(ResourceHandleTest, CRUD) {
   {
     TF_EXPECT_OK(DeleteResource<StubResource>(&ctx, p));
     core::RefCountPtr<StubResource> unused;
+    EXPECT_FALSE(LookupResource(&ctx, p, &unused).ok());
+  }
+}
+
+TEST(ResourceHandleTest, LookupDeleteGenericResource) {
+  ResourceMgr resource_mgr("");
+  OpKernelContext::Params params;
+  params.resource_manager = &resource_mgr;
+  StubDevice device("device_name");
+  params.device = &device;
+  OpKernelContext ctx(&params, 0);
+
+  ResourceHandle p =
+      MakeResourceHandle<StubResource>(&ctx, "container", "name");
+
+  {
+    auto* r = new StubResource();
+    r->value_ = 42;
+    TF_EXPECT_OK(CreateResource(&ctx, p, r));
+  }
+  {
+    ResourceBase* r;
+    TF_ASSERT_OK(LookupResource(&ctx, p, &r));
+    ASSERT_TRUE(r != nullptr);
+    core::ScopedUnref unref(r);
+    EXPECT_EQ(static_cast<StubResource*>(r)->value_, 42);
+  }
+  {
+    TF_EXPECT_OK(DeleteResource(&ctx, p));
+    ResourceBase* unused;
     EXPECT_FALSE(LookupResource(&ctx, p, &unused).ok());
   }
 }
@@ -350,53 +466,6 @@ TEST(ResourceHandleTest, DeleteUsingResourceHandle) {
 
   TF_EXPECT_OK(DeleteResource(&ctx, p));
   EXPECT_NE(LookupResource<StubResource>(&ctx, p, &lookup_r).ok(), true);
-}
-
-TEST(ResourceHandleTest, AllowedDevices) {
-  const std::vector<string> device_names = {
-      "/job:worker/replica:0/task:0/device:CPU:0",
-      "/job:worker/replica:0/task:0/device:CPU:2",
-      "/job:worker/replica:1/task:3/device:CPU:5"};
-  std::vector<StubDevice> devices;
-  for (const string& name : device_names) {
-    devices.emplace_back(name);
-  }
-
-  std::vector<OpKernelContext::Params> params(device_names.size());
-  std::vector<std::unique_ptr<ResourceMgr>> resource_mgrs;
-  std::vector<std::unique_ptr<OpKernelContext>> ctxs;
-  for (int i = 0; i < device_names.size(); ++i) {
-    resource_mgrs.emplace_back(
-        absl::make_unique<ResourceMgr>(/* default_container= */ ""));
-    params[i].resource_manager = resource_mgrs[i].get();
-    params[i].device = &(devices[i]);
-    ctxs.emplace_back(
-        absl::make_unique<OpKernelContext>(&(params[i]), /* num_outputs= */ 0));
-  }
-
-  const string partially_specified_name =
-      "/job:worker/replica:0/task:0/device:CPU:*";
-  const string& fully_specified_name = device_names.at(2);
-  const std::vector<string> allowed_devices = {partially_specified_name,
-                                               fully_specified_name};
-  // Create a ResourceHandle on device 0.
-  ResourceHandle p = MakeResourceHandle<StubResource>(
-      ctxs[0].get(), "container", "name",
-      /* dtypes_and_shapes= */ {}, allowed_devices);
-
-  std::vector<StubResource*> resources;
-  for (const auto& ctx : ctxs) {
-    StubResource* r = new StubResource;
-    TF_EXPECT_OK(CreateResource(ctx.get(), p, r));
-    resources.push_back(r);
-  }
-
-  for (int i = 0; i < ctxs.size(); ++i) {
-    core::RefCountPtr<StubResource> lookup_r;
-    TF_EXPECT_OK(LookupResource<StubResource>(ctxs[i].get(), p, &lookup_r));
-    EXPECT_EQ(lookup_r.get(), resources[i]);
-    TF_EXPECT_OK(DeleteResource(ctxs[i].get(), p));
-  }
 }
 
 }  // end namespace tensorflow

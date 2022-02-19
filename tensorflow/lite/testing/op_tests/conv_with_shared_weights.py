@@ -13,10 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 """Test configs for conv_with_shared_weights."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 import tensorflow.compat.v1 as tf
 from tensorflow.lite.testing.zip_test_utils import create_tensor_data
@@ -36,6 +32,7 @@ def make_conv_with_shared_weights_tests(options):
       "padding": ["SAME"],
       "data_format": ["NHWC"],
       "channel_multiplier": [1],
+      "dynamic_range_quantize": [False, True],
   }]
 
   def get_tensor_shapes(parameters):

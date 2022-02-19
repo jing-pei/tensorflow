@@ -31,10 +31,10 @@ LogicalBuffer::LogicalBuffer(HloInstruction* instruction,
 
 LogicalBuffer::~LogicalBuffer() {}
 
-string LogicalBuffer::ToString() const {
-  string color_string;
+std::string LogicalBuffer::ToString() const {
+  std::string color_string;
   if (has_color()) {
-    color_string = absl::StrCat(" @", color().value());
+    color_string = absl::StrCat(" @", color());
   }
   return absl::StrCat(instruction_->name(), "[", absl::StrJoin(index_, ","),
                       "](#", id(), color_string, ")");

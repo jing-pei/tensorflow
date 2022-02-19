@@ -2,13 +2,25 @@ load("//tensorflow/core/platform:build_config.bzl", "tf_proto_library")
 
 package(
     default_visibility = ["//tensorflow/core/profiler:internal"],
-    licenses = ["notice"],  # Apache 2.0
+    licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
     includes = [
         "//tensorflow/core/profiler:friends",
+    ],
+)
+
+package_group(
+    name = "memory_viewer_friends",
+    includes = [
+        "//tensorflow/core/profiler:friends",
+    ],
+    packages = [
+        "//learning/deepmind/jax/statix/...",
+        "//platforms/xla/tools/...",
+        "//smartass/brain/tpu_worker/...",
     ],
 )
 
@@ -27,9 +39,19 @@ exports_files(
 )
 
 tf_proto_library(
+    name = "diagnostics_proto",
+    srcs = ["diagnostics.proto"],
+    cc_api_version = 2,
+    visibility = [
+        ":friends",
+    ],
+)
+
+tf_proto_library(
     name = "input_pipeline_proto",
     srcs = ["input_pipeline.proto"],
     cc_api_version = 2,
+    protodeps = [":diagnostics_proto"],
     visibility = [
         ":friends",
     ],
@@ -39,7 +61,10 @@ tf_proto_library(
     name = "overview_page_proto",
     srcs = ["overview_page.proto"],
     cc_api_version = 2,
-    protodeps = [":input_pipeline_proto"],
+    protodeps = [
+        ":diagnostics_proto",
+        ":input_pipeline_proto",
+    ],
     visibility = [
         ":friends",
     ],
@@ -49,6 +74,27 @@ tf_proto_library(
     name = "op_metrics_proto",
     srcs = ["op_metrics.proto"],
     cc_api_version = 2,
+    visibility = [":friends"],
+)
+
+tf_proto_library(
+    name = "pod_stats_proto",
+    srcs = ["pod_stats.proto"],
+    cc_api_version = 2,
+    protodeps = [
+        ":diagnostics_proto",
+    ],
+    visibility = [":friends"],
+)
+
+tf_proto_library(
+    name = "pod_viewer_proto",
+    srcs = ["pod_viewer.proto"],
+    cc_api_version = 2,
+    protodeps = [
+        ":diagnostics_proto",
+        ":pod_stats_proto",
+    ],
     visibility = [":friends"],
 )
 
@@ -74,6 +120,7 @@ tf_proto_library(
     srcs = ["op_stats.proto"],
     cc_api_version = 2,
     protodeps = [
+        ":diagnostics_proto",
         ":kernel_stats_proto",
         ":op_metrics_proto",
         ":steps_db_proto",
@@ -134,3 +181,40 @@ tf_proto_library(
     cc_api_version = 2,
     visibility = [":friends"],
 )
+
+tf_proto_library(
+    name = "tf_data_stats_proto",
+    srcs = ["tf_data_stats.proto"],
+    cc_api_version = 2,
+    visibility = [":friends"],
+)
+
+tf_proto_library(
+    name = "memory_viewer_preprocess_proto",
+    srcs = ["memory_viewer_preprocess.proto"],
+    cc_api_version = 2,
+    visibility = [":memory_viewer_friends"],
+)
+
+# copybara:uncomment_begin(google-only)
+# py_proto_library(
+#     name = "xplane_py_pb2",
+#     api_version = 2,
+#     visibility = [":friends"],
+#     deps = [":xplane_proto"],
+# )
+#
+# py_proto_library(
+#     name = "trace_events_py_pb2",
+#     api_version = 2,
+#     visibility = ["//visibility:public"],
+#     deps = [":trace_events_proto"],
+# )
+#
+# py_proto_library(
+#     name = "memory_viewer_preprocess_py_pb2",
+#     api_version = 2,
+#     visibility = [":memory_viewer_friends"],
+#     deps = [":memory_viewer_preprocess_proto"],
+# )
+# copybara:uncomment_end

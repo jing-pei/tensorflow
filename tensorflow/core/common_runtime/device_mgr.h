@@ -60,7 +60,7 @@ class DeviceMgr {
   // Check if the current device manager contains device with the given
   // incarnation ID. Looking up by incarnation IDs because they are randomly
   // generated and not intentionally reused (unlike device pointers).
-  virtual bool ContainsDevice(int64 device_incarnation) const = 0;
+  virtual bool ContainsDevice(int64_t device_incarnation) const = 0;
 
   // Clears given containers of all devices if 'container' is
   // non-empty. Otherwise, clears default containers of all devices.
@@ -92,7 +92,7 @@ class StaticDeviceMgr : public DeviceMgr {
   string DebugString() const override;
   string DeviceMappingString() const override;
   Status LookupDevice(StringPiece name, Device** device) const override;
-  bool ContainsDevice(int64 device_incarnation) const override;
+  bool ContainsDevice(int64_t device_incarnation) const override;
   void ClearContainers(gtl::ArraySlice<string> containers) const override;
   int NumDeviceType(const string& type) const override;
   Device* HostCPU() const override;
@@ -102,7 +102,7 @@ class StaticDeviceMgr : public DeviceMgr {
 
   StringPiece CopyToBackingStore(StringPiece s);
 
-  absl::flat_hash_set<int64> device_incarnation_set_;
+  absl::flat_hash_set<int64_t> device_incarnation_set_;
   std::unordered_map<StringPiece, Device*, StringPieceHasher> device_map_;
   core::Arena name_backing_store_;  // Storage for keys in device_map_
   std::unordered_map<string, int> device_type_counts_;
@@ -111,11 +111,18 @@ class StaticDeviceMgr : public DeviceMgr {
   TF_DISALLOW_COPY_AND_ASSIGN(StaticDeviceMgr);
 };
 
+// Size of stale device buffer for temporary storage of removed devices.
+static const size_t kStaleDeviceBufferSize = 8192;
+
 // Represents a dynamic set of devices
 class DynamicDeviceMgr : public DeviceMgr {
  public:
   // Constructs an empty DynamicDeviceMgr.
   DynamicDeviceMgr();
+
+  // Constructs a DynamicDeviceMgr from a list of devices.
+  // TODO(b/183966398): Remove StaticDeviceMgr since there's no usage.
+  explicit DynamicDeviceMgr(std::vector<std::unique_ptr<Device>> devices);
 
   ~DynamicDeviceMgr() override;
 
@@ -125,7 +132,7 @@ class DynamicDeviceMgr : public DeviceMgr {
   string DebugString() const override;
   string DeviceMappingString() const override;
   Status LookupDevice(StringPiece name, Device** device) const override;
-  bool ContainsDevice(int64 device_incarnation) const override;
+  bool ContainsDevice(int64_t device_incarnation) const override;
   void ClearContainers(gtl::ArraySlice<string> containers) const override;
   int NumDeviceType(const string& type) const override;
   Device* HostCPU() const override;
@@ -136,7 +143,7 @@ class DynamicDeviceMgr : public DeviceMgr {
   // Remove devices from device manager.
   // Returns error for non-existing devices or if the HostCPU() device is in the
   // input list. If an error is returned, the device list is not modified.
-  Status RemoveDevices(std::vector<Device*> devices);
+  Status RemoveDevices(const std::vector<Device*>& devices);
 
   // Remove devices from device manager by their names. Returns error for
   // non-existing devices or if the HostCPU() device is given in the input list.
@@ -146,16 +153,39 @@ class DynamicDeviceMgr : public DeviceMgr {
  private:
   mutable mutex devices_mu_;
 
-  std::unordered_map<Device*, std::unique_ptr<Device>> dynamic_devices_
+  std::vector<std::unique_ptr<Device>> dynamic_devices_
       TF_GUARDED_BY(devices_mu_);
 
-  absl::flat_hash_set<int64> device_incarnation_set_ TF_GUARDED_BY(devices_mu_);
+  absl::flat_hash_set<int64_t> device_incarnation_set_
+      TF_GUARDED_BY(devices_mu_);
   std::unordered_map<string, Device*> device_map_ TF_GUARDED_BY(devices_mu_);
 
   std::unordered_map<string, int> device_type_counts_
       TF_GUARDED_BY(devices_mu_);
 
-  mutable Device* cpu_device_ TF_GUARDED_BY(devices_mu_);
+  mutable std::atomic<Device*> cpu_device_;  // memoize `HostCPU` result
+
+  class DeviceCircularBuffer {
+   public:
+    DeviceCircularBuffer() : index_(0) {
+      devices_.resize(kStaleDeviceBufferSize);
+    }
+    void add(std::unique_ptr<Device> device) {
+      devices_[index_] = std::move(device);
+      index_ = (index_ + 1) % kStaleDeviceBufferSize;
+    }
+
+   private:
+    int index_;
+    std::vector<std::unique_ptr<Device>> devices_;
+  };
+
+  // Buffer to temporarily store the removed devices. Raw device pointers are
+  // accessible to DeviceSet, and if the function instantiation process directly
+  // access fields through the device set, the underlying device object must
+  // still be available to avoid segmentation fault. We keep the devices in this
+  // buffer only for that purpose.
+  DeviceCircularBuffer stale_devices_ TF_GUARDED_BY(devices_mu_);
 
   TF_DISALLOW_COPY_AND_ASSIGN(DynamicDeviceMgr);
 };

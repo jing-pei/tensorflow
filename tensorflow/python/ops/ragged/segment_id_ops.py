@@ -14,10 +14,6 @@
 # ==============================================================================
 """Ops for converting between row_splits and segment_ids."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
@@ -98,6 +94,8 @@ def segment_ids_to_row_splits(segment_ids, num_segments=None,
   Returns:
     A sorted 1-D integer Tensor, with `shape=[num_segments + 1]`.
   """
+  # Local import bincount_ops to avoid import-cycle.
+  from tensorflow.python.ops import bincount_ops  # pylint: disable=g-import-not-at-top
   if out_type is None:
     if isinstance(segment_ids, ops.Tensor):
       out_type = segment_ids.dtype
@@ -119,7 +117,7 @@ def segment_ids_to_row_splits(segment_ids, num_segments=None,
                                                        dtype=dtypes.int32)
       num_segments.shape.assert_has_rank(0)
 
-    row_lengths = math_ops.bincount(
+    row_lengths = bincount_ops.bincount(
         segment_ids,
         minlength=num_segments,
         maxlength=num_segments,

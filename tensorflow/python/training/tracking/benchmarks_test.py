@@ -14,10 +14,6 @@
 # ==============================================================================
 """Benchmarks for checkpoint-related APIs."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 import time
 
@@ -77,7 +73,7 @@ class SavingBenchmarks(test.Benchmark):
   def _run(self, func, num_iters, execution_mode=None):
     func()
     start = time.time()
-    for _ in xrange(num_iters):
+    for _ in range(num_iters):
       func()
     end = time.time()
     mean_us = (end - start) * 1e6 / num_iters

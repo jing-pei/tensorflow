@@ -20,10 +20,6 @@ bazel run tensorflow/python/eager:gradient_input_output_exclusions -- \
   $PWD/tensorflow/python/eager/pywrap_gradient_exclusions.cc
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import argparse
 import sys
 
@@ -127,21 +123,20 @@ class _SubscriptUseTracker(transformer.Base):
 
   def visit_Subscript(self, node):
     """Visits nodes with subscript in the AST."""
+    s = node.slice
     if anno.hasanno(node, anno.Basic.QN):
       qn = anno.getanno(node, anno.Basic.QN)
       if isinstance(node.ctx, gast.Load):
         self.reads.add(qn)
-    elif not isinstance(node.slice, gast.Index):
-      if anno.hasanno(node, anno.Basic.QN):
-        self.complex_reads.add(anno.getanno(node, anno.Basic.QN))
-      elif anno.hasanno(node.value, anno.Basic.QN):
+    elif isinstance(s, (gast.Tuple, gast.Slice)):
+      if anno.hasanno(node.value, anno.Basic.QN):
         self.complex_reads.add(anno.getanno(node.value, anno.Basic.QN))
     value_qn = anno.getanno(node.value, anno.Basic.QN, None)
     if value_qn in self.exclude:
       node.value = self.generic_visit(node.value)
     else:
       node.value = self.visit(node.value)
-    node.slice = self.visit(node.slice)
+    node.slice = self.visit(s)
     return node
 
 
@@ -253,7 +248,8 @@ def _live_tensors(f, attr_name="inputs"):
       # Not a number, assuming it can be anything.
       return _ALL
     subscript_val, = subscript.qn
-    if not isinstance(subscript_val, qual_names.NumberLiteral):
+    if (not isinstance(subscript_val, qual_names.Literal) and
+        not isinstance(subscript_val.value, int)):
       # Not a number, assuming it can be anything.
       return _ALL
     input_output_indices.add(subscript_val.value)

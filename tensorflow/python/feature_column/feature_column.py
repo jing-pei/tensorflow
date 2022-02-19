@@ -127,10 +127,6 @@ are a somewhat duplicate of the code here. Please make sure to update logic
 in both places.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import abc
 import collections
 import math
@@ -144,7 +140,6 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import sparse_tensor as sparse_tensor_lib
 from tensorflow.python.framework import tensor_shape
-from tensorflow.python.keras.engine import training
 from tensorflow.python.layers import base
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import check_ops
@@ -165,8 +160,8 @@ from tensorflow.python.platform import gfile
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training import checkpoint_utils
 from tensorflow.python.util import nest
-from tensorflow.python.util.tf_export import tf_export
 from tensorflow.python.util.compat import collections_abc
+from tensorflow.python.util.tf_export import tf_export
 
 
 def _internal_input_layer(features,
@@ -616,7 +611,7 @@ def _strip_leading_slashes(name):
   return name.rsplit('/', 1)[-1]
 
 
-class _LinearModel(training.Model):
+class _LinearModel(base.Layer):
   """Creates a linear model using feature columns.
 
   See `linear_model` for details.
@@ -631,6 +626,12 @@ class _LinearModel(training.Model):
                name=None,
                **kwargs):
     super(_LinearModel, self).__init__(name=name, **kwargs)
+    # We force the keras_style to be True here, as a workaround to not being
+    # able to inherit keras.layers.Layer as base class. Setting this will let
+    # us skip all the legacy behavior for base.Layer.
+    # Also note that we use Layer as base class, instead of Model, since there
+    # isn't any Model specific behavior gets used, eg compile/fit.
+    self._keras_style = True
     self._feature_columns = _normalize_feature_columns(
         feature_columns)
     self._weight_collections = list(weight_collections or [])
@@ -2748,7 +2749,7 @@ class _SharedEmbeddingColumn(
 def _check_shape(shape, key):
   """Returns shape if it's valid, raises error otherwise."""
   assert shape is not None
-  if not nest.is_sequence(shape):
+  if not nest.is_nested(shape):
     shape = [shape]
   shape = tuple(shape)
   for dimension in shape:

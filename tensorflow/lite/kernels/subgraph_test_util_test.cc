@@ -14,10 +14,16 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/lite/kernels/subgraph_test_util.h"
+
+#include <stdint.h>
+
+#include <memory>
+#include <vector>
+
 #include <gtest/gtest.h>
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
-#include "tensorflow/lite/kernels/test_util.h"
+#include "tensorflow/lite/testing/util.h"
 
 namespace tflite {
 
@@ -166,9 +172,3 @@ TEST_F(SubgraphBuilderTest, TestBuildPadLoopBodySubgraph) {
 }  // namespace
 }  // namespace subgraph_test_util
 }  // namespace tflite
-
-int main(int argc, char** argv) {
-  ::tflite::LogToStderr();
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

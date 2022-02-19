@@ -26,11 +26,12 @@ limitations under the License.
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/random/random.h"
 #include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/protobuf/rewriter_config.pb.h"
 #include "tensorflow/core/util/ptr_util.h"
-#ifndef __ANDROID__
+#ifndef IS_MOBILE_PLATFORM
 #include "tensorflow/core/grappler/optimizers/meta_optimizer.h"
 #endif
 
@@ -43,7 +44,8 @@ namespace tensorflow {
 PartitionedCallOp::PartitionedCallOp(OpKernelConstruction* ctx)
     : AsyncOpKernel(ctx),
       func_(new NameAttrList),
-      config_proto_(new ConfigProto) {
+      config_proto_(new ConfigProto),
+      shared_rendezvous_(false) {
   OP_REQUIRES_OK(
       ctx, ctx->GetAttr(FunctionLibraryDefinition::kFuncAttr, func_.get()));
   string deprecated_config_serialized;
@@ -139,6 +141,11 @@ Status PartitionedCallOp::FillOutputDevices(
     return errors::NotFound("Failed to find definition for function \"",
                             func_->name(), "\"");
   }
+  auto func_attrs = fdef->attr();
+  auto attr = func_attrs.find(FunctionLibraryDefinition::kSharedRendezvousAttr);
+  if (attr != func_attrs.end() && attr->second.b()) {
+    shared_rendezvous_ = true;
+  }
 
   bool is_type_list;
   for (const OpDef::ArgDef& ret_def : fdef->signature().output_arg()) {
@@ -171,7 +178,7 @@ Status PartitionedCallOp::Instantiate(FunctionLibraryRuntime* lib,
     opts.config_proto = *config;
   }
 
-#ifndef __ANDROID__
+#ifndef IS_MOBILE_PLATFORM
   // Android tf library does not include grappler.
   grappler::GrapplerItem::OptimizationOptions optimization_options;
   // Tensorflow 2.0 in eager mode with automatic control dependencies will
@@ -245,17 +252,13 @@ void PartitionedCallOp::RunFunction(FunctionLibraryRuntime::Handle handle,
   run_opts.source_device =
       lib->device() == nullptr ? "" : lib->device()->name();
   run_opts.allow_dead_tensors = true;
-  run_opts.rendezvous = ctx->rendezvous();
+  if (shared_rendezvous_) {
+    run_opts.rendezvous = ctx->rendezvous();
+  }
 
   std::vector<Tensor>* rets = new std::vector<Tensor>;
   const string& func_name = func_->name();
-  profiler::TraceMe trace_me(
-      [&] {
-        return absl::StrCat(
-            "PartitionedCallOp #parent_step_id=", ctx->step_id(),
-            ",function_step_id=", run_opts.step_id, "#");
-      },
-      /*level=*/2);
+  profiler::TraceMe trace_me("PartitionedCallOp");
   lib->Run(run_opts, handle, inputs, rets,
            [rets, done = std::move(done), ctx, func_name,
             step_container](const Status& status) {
@@ -263,7 +266,8 @@ void PartitionedCallOp::RunFunction(FunctionLibraryRuntime::Handle handle,
                const string function_and_msg =
                    strings::StrCat(errors::FormatFunctionForError(func_name),
                                    " ", status.error_message());
-               ctx->SetStatus(Status(status.code(), function_and_msg));
+               ctx->SetStatus(
+                   errors::CreateWithUpdatedMessage(status, function_and_msg));
              } else {
                for (int i = 0; i < rets->size(); ++i) {
                  ctx->set_output(i, (*rets)[i]);
@@ -279,19 +283,12 @@ REGISTER_KERNEL_BUILDER(Name("PartitionedCall").Device(DEVICE_CPU),
                         PartitionedCallOp);
 REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_CPU),
                         PartitionedCallOp);
-REGISTER_KERNEL_BUILDER(Name("PartitionedCall").Device(DEVICE_GPU),
+REGISTER_KERNEL_BUILDER(Name("PartitionedCall").Device(DEVICE_DEFAULT),
                         PartitionedCallOp);
-REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_GPU),
+REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_DEFAULT),
                         PartitionedCallOp);
 
 REGISTER_INPUT_COLOCATION_EXEMPTION("PartitionedCall");
 REGISTER_INPUT_COLOCATION_EXEMPTION("StatefulPartitionedCall");
-
-#if TENSORFLOW_USE_SYCL
-REGISTER_KERNEL_BUILDER(Name("PartitionedCall").Device(DEVICE_SYCL),
-                        PartitionedCallOp);
-REGISTER_KERNEL_BUILDER(Name("StatefulPartitionedCall").Device(DEVICE_SYCL),
-                        PartitionedCallOp);
-#endif  // TENSORFLOW_USE_SYCL
 
 }  // namespace tensorflow

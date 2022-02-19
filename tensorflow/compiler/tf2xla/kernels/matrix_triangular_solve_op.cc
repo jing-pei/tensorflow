@@ -50,6 +50,14 @@ class MatrixTriangularSolveOp : public XlaOpKernel {
       return;
     }
 
+    auto lhs_size = lhs_shape.dims();
+    OP_REQUIRES(
+        ctx,
+        lhs_shape.dim_size(lhs_size - 1) == lhs_shape.dim_size(lhs_size - 2),
+        errors::InvalidArgument("The coefficient matrix must be square in "
+                                "the inner-most two dimensions: ",
+                                lhs_shape.DebugString()));
+
     xla::XlaOp a = ctx->Input(0);
     xla::XlaOp b = ctx->Input(1);
     std::tie(a, b) = Broadcast(a, lhs_shape, b, rhs_shape, bcast);
@@ -75,8 +83,8 @@ MatrixTriangularSolveOp::Broadcast(xla::XlaOp lhs, const TensorShape& lhs_shape,
                                    xla::XlaOp rhs, const TensorShape& rhs_shape,
                                    const MatMulBCast& broadcast_helper) {
   // Get the batch shape.
-  int64 m = lhs_shape.dim_size(lhs_shape.dims() - 1);
-  int64 n = rhs_shape.dim_size(rhs_shape.dims() - 1);
+  int64_t m = lhs_shape.dim_size(lhs_shape.dims() - 1);
+  int64_t n = rhs_shape.dim_size(rhs_shape.dims() - 1);
 
   TensorShape lhs_broadcast_shape(broadcast_helper.output_batch_shape());
   lhs_broadcast_shape.AddDim(m);

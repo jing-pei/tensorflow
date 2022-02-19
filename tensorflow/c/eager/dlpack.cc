@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tensorflow/c/eager/dlpack.h"
 
+#include <string>
+
 #include "include/dlpack/dlpack.h"  // from @dlpack
 #include "tensorflow/c/eager/c_api.h"
 #include "tensorflow/c/eager/c_api_experimental.h"
@@ -97,6 +99,10 @@ DLDataType GetDlDataType(TF_DataType data_type, TF_Status* status) {
     case TF_DataType::TF_BFLOAT16:
       dtype.code = DLDataTypeCode::kDLBfloat;
       break;
+    case TF_DataType::TF_COMPLEX64:
+    case TF_DataType::TF_COMPLEX128:
+      dtype.code = DLDataTypeCode::kDLComplex;
+      break;
     default:
       status->status = tensorflow::errors::InvalidArgument(
           DataType_Name(static_cast<DataType>(data_type)),
@@ -106,10 +112,11 @@ DLDataType GetDlDataType(TF_DataType data_type, TF_Status* status) {
   return dtype;
 }
 
-// Gets DLPack's DLContext from eager tensor handle.
-DLContext GetDlContext(TFE_TensorHandle* h, TF_Status* status) {
-  DLContext ctx;
-  const char* device_name = tensorflow::unwrap(h)->DeviceName(&status->status);
+// Gets DLPack's DLDevice from eager tensor handle.
+DLDevice GetDlContext(TFE_TensorHandle* h, TF_Status* status) {
+  DLDevice ctx;
+  const char* device_name =
+      tensorflow::unwrap(h)->BackingDeviceName(&status->status);
   DeviceNameUtils::ParsedName parsed_name;
   tensorflow::DeviceNameUtils::ParseFullName(device_name, &parsed_name);
   std::string device_type = parsed_name.type;
@@ -122,7 +129,7 @@ DLContext GetDlContext(TFE_TensorHandle* h, TF_Status* status) {
   if (device_type == "CPU") {
     ctx.device_type = DLDeviceType::kDLCPU;
   } else if (device_type == "GPU") {
-    ctx.device_type = DLDeviceType::kDLGPU;
+    ctx.device_type = DLDeviceType::kDLCUDA;
   } else {
     status->status = tensorflow::errors::InvalidArgument(
         "Unsupported Device Type for dlpack");
@@ -131,13 +138,13 @@ DLContext GetDlContext(TFE_TensorHandle* h, TF_Status* status) {
   return ctx;
 }
 
-// Converts DLContext to TF device name.
-absl::optional<std::string> DeviceNameFromDlContext(const DLContext& ctx,
+// Converts DLDevice to TF device name.
+absl::optional<std::string> DeviceNameFromDlContext(const DLDevice& ctx,
                                                     TF_Status* status) {
   switch (ctx.device_type) {
     case DLDeviceType::kDLCPU:
       return "CPU:0";
-    case DLDeviceType::kDLGPU:
+    case DLDeviceType::kDLCUDA:
       return absl::StrCat("GPU:", ctx.device_id);
     default:
       return absl::nullopt;
@@ -212,6 +219,19 @@ Status TfDataTypeFormDlDataType(const DLDataType& dtype,
               "Unsupported BFloat bits: ", dtype.bits);
       }
       break;
+    case DLDataTypeCode::kDLComplex:
+      switch (dtype.bits) {
+        case 64:
+          *tf_dtype = TF_DataType::TF_COMPLEX64;
+          return Status::OK();
+        case 128:
+          *tf_dtype = TF_DataType::TF_COMPLEX128;
+          return Status::OK();
+        default:
+          return tensorflow::errors::InvalidArgument(
+              "Unsupported Complex bits: ", dtype.bits);
+      }
+      break;
     default:
       return tensorflow::errors::InvalidArgument("Unsupported Type Codes: ",
                                                  dtype.code);
@@ -221,8 +241,7 @@ Status TfDataTypeFormDlDataType(const DLDataType& dtype,
 // Wraps the deleter function of DLManagedTensor to match the function signature
 // TFE_NewTensorHandleFromDeviceMemory.
 void DeallocatorWrapperFunc(void* data, size_t len, void* dlmt_vptr) {
-  DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(dlmt_vptr);
-  dlmt->deleter(const_cast<DLManagedTensor*>(dlmt));
+  TFE_CallDLManagedTensorDeleter(dlmt_vptr);
 }
 
 // Checks whether the stride array matches the layout of compact, row-majored
@@ -249,21 +268,36 @@ void TFE_CallDLManagedTensorDeleter(void* dlm_ptr) {
 }
 
 void* TFE_HandleToDLPack(TFE_TensorHandle* h, TF_Status* status) {
+  auto tf_dlm_context = GetDlContext(h, status);
+  if (!status->status.ok()) {
+    return nullptr;
+  }
+
+  auto* tf_dlm_data = TFE_TensorHandleDevicePointer(h, status);
+  if (!status->status.ok()) {
+    return nullptr;
+  }
+
   const Tensor* tensor = GetTensorFromHandle(h, status);
   TF_DataType data_type = static_cast<TF_DataType>(tensor->dtype());
-  TensorReference tensor_ref(*tensor);  // This will call buf_->Ref()
 
+  auto tf_dlm_type = GetDlDataType(data_type, status);
+  if (!status->status.ok()) {
+    return nullptr;
+  }
+
+  TensorReference tensor_ref(*tensor);  // This will call buf_->Ref()
   auto* tf_dlm_tensor_ctx = new TfDlManagedTensorCtx(tensor_ref);
   tf_dlm_tensor_ctx->reference = tensor_ref;
 
   DLManagedTensor* dlm_tensor = &tf_dlm_tensor_ctx->tensor;
   dlm_tensor->manager_ctx = tf_dlm_tensor_ctx;
   dlm_tensor->deleter = &DLManagedTensorDeleter;
-  dlm_tensor->dl_tensor.ctx = GetDlContext(h, status);
+  dlm_tensor->dl_tensor.device = tf_dlm_context;
   int ndim = tensor->dims();
   dlm_tensor->dl_tensor.ndim = ndim;
-  dlm_tensor->dl_tensor.data = TFE_TensorHandleDevicePointer(h, status);
-  dlm_tensor->dl_tensor.dtype = GetDlDataType(data_type, status);
+  dlm_tensor->dl_tensor.data = tf_dlm_data;
+  dlm_tensor->dl_tensor.dtype = tf_dlm_type;
 
   std::vector<int64_t>* shape_arr = &tf_dlm_tensor_ctx->shape;
   std::vector<int64_t>* stride_arr = &tf_dlm_tensor_ctx->strides;
@@ -276,13 +310,14 @@ void* TFE_HandleToDLPack(TFE_TensorHandle* h, TF_Status* status) {
     (*stride_arr)[i] = (*shape_arr)[i + 1] * (*stride_arr)[i + 1];
   }
 
-  dlm_tensor->dl_tensor.shape = &(*shape_arr)[0];
+  dlm_tensor->dl_tensor.shape = shape_arr->data();
   // There are two ways to represent compact row-major data
   // 1) nullptr indicates tensor is compact and row-majored.
   // 2) fill in the strides array as the real case for compact row-major data.
   // Here we choose option 2, since some frameworks didn't handle the strides
   // argument properly.
-  dlm_tensor->dl_tensor.strides = &(*stride_arr)[0];
+  dlm_tensor->dl_tensor.strides = stride_arr->data();
+
   dlm_tensor->dl_tensor.byte_offset =
       0;  // TF doesn't handle the strides and byte_offsets here
   return static_cast<void*>(dlm_tensor);
@@ -293,7 +328,7 @@ TFE_TensorHandle* TFE_HandleFromDLPack(void* dlm, TF_Status* status,
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(dlm);
   DLTensor* dl_tensor = &dlmt->dl_tensor;
   absl::optional<std::string> device_name =
-      DeviceNameFromDlContext(dl_tensor->ctx, status);
+      DeviceNameFromDlContext(dl_tensor->device, status);
   if (!device_name.has_value()) {
     status->status =
         tensorflow::errors::InvalidArgument("Unsupported Device Type");
@@ -324,7 +359,7 @@ TFE_TensorHandle* TFE_HandleFromDLPack(void* dlm, TF_Status* status,
 
   TFE_TensorHandle* handle = TFE_NewTensorHandleFromDeviceMemory(
       ctx, device_name.value().c_str(), dtype, dims, num_dims, data,
-      total_bytes, &DeallocatorWrapperFunc, &dlmt, status);
+      total_bytes, &DeallocatorWrapperFunc, dlmt, status);
 
   return handle;
 }

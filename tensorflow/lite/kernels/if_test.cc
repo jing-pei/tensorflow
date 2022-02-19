@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <stdint.h>
+
+#include <memory>
+#include <vector>
+
 #include <gtest/gtest.h>
-#include "flatbuffers/flexbuffers.h"  // from @flatbuffers
 #include "tensorflow/lite/interpreter.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
-#include "tensorflow/lite/kernels/register.h"
 #include "tensorflow/lite/kernels/subgraph_test_util.h"
-#include "tensorflow/lite/kernels/test_util.h"
-#include "tensorflow/lite/model.h"
 
 namespace tflite {
 
@@ -35,7 +36,7 @@ namespace {
 class SimpleIfTest : public ControlFlowOpTest {
  protected:
   void SetUp() override {
-    interpreter_->AddSubgraphs(2);
+    AddSubgraphs(2);
     builder_->BuildAddSubgraph(interpreter_->subgraph(1));
     builder_->BuildMulSubgraph(interpreter_->subgraph(2));
     builder_->BuildIfSubgraph(&interpreter_->primary_subgraph());
@@ -69,7 +70,7 @@ TEST_F(SimpleIfTest, TestIfFalse) {
 class DynamicSubgraphIfTest : public ControlFlowOpTest {
  protected:
   void SetUp() override {
-    interpreter_->AddSubgraphs(2);
+    AddSubgraphs(2);
     builder_->BuildAddSubgraph(interpreter_->subgraph(1));
     builder_->BuildPadSubgraph(interpreter_->subgraph(2));
     builder_->BuildIfSubgraph(&interpreter_->primary_subgraph());

@@ -28,8 +28,6 @@ limitations under the License.
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/core/lib/core/status.h"
-#include "tensorflow/core/platform/macros.h"
-#include "tensorflow/core/platform/types.h"
 
 namespace xla {
 
@@ -98,16 +96,40 @@ class DfsHloVisitorWithDefaultBase
   Status HandleCholesky(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }
+  Status HandleOptimizationBarrier(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
   Status HandleAllGather(HloInstructionPtr crs) override {
+    return DefaultAction(crs);
+  }
+  Status HandleAllGatherStart(HloInstructionPtr crs) override {
+    return DefaultAction(crs);
+  }
+  Status HandleAllGatherDone(HloInstructionPtr crs) override {
     return DefaultAction(crs);
   }
   Status HandleAllReduce(HloInstructionPtr crs) override {
     return DefaultAction(crs);
   }
+  Status HandleReduceScatter(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
+  Status HandleAllReduceStart(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
+  Status HandleAllReduceDone(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
   Status HandleAllToAll(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }
   Status HandleCollectivePermute(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
+  Status HandleCollectivePermuteStart(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
+  Status HandleCollectivePermuteDone(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }
   Status HandleReplicaId(HloInstructionPtr hlo) override {
@@ -192,6 +214,9 @@ class DfsHloVisitorWithDefaultBase
   Status HandlePad(HloInstructionPtr pad) override {
     return DefaultAction(pad);
   }
+  Status HandleDynamicReshape(HloInstructionPtr dynamic_reshape) override {
+    return DefaultAction(dynamic_reshape);
+  }
   Status HandleReshape(HloInstructionPtr reshape) override {
     return DefaultAction(reshape);
   }
@@ -248,7 +273,9 @@ class DfsHloVisitorWithDefaultBase
   }
 
  private:
-  TF_DISALLOW_COPY_AND_ASSIGN(DfsHloVisitorWithDefaultBase);
+  DfsHloVisitorWithDefaultBase(const DfsHloVisitorWithDefaultBase&) = delete;
+  DfsHloVisitorWithDefaultBase& operator=(const DfsHloVisitorWithDefaultBase&) =
+      delete;
 };
 
 // Users should use these type aliases which are only two valid instantiations.
@@ -298,14 +325,25 @@ class DfsHloRewriteVisitor : public DfsHloVisitorWithDefault {
   // Replaces the existing HLO instruction old_instruction, with
   // new_instruction, and marks the optimizer status as changed.
   // Returns the Status representing the result of the replace operation.
-  Status ReplaceInstruction(HloInstruction* old_instruction,
-                            HloInstruction* new_instruction) {
+  StatusOr<bool> ReplaceInstruction(HloInstruction* old_instruction,
+                                    HloInstruction* new_instruction,
+                                    bool preserve_sharding) {
     VLOG(3) << "Replacing instruction:";
     VLOG(3) << "  old: " << old_instruction->ToString();
     VLOG(3) << "  new: " << new_instruction->ToString();
-    TF_RETURN_IF_ERROR(old_instruction->parent()->ReplaceInstruction(
-        old_instruction, new_instruction));
-    changed_ = true;
+    TF_ASSIGN_OR_RETURN(
+        bool changed, old_instruction->parent()->ReplaceInstruction(
+                          old_instruction, new_instruction, preserve_sharding));
+    changed_ |= changed;
+    return changed;
+  }
+
+  Status ReplaceInstruction(HloInstruction* old_instruction,
+                            HloInstruction* new_instruction) {
+    TF_ASSIGN_OR_RETURN(bool changed,
+                        ReplaceInstruction(old_instruction, new_instruction,
+                                           /*preserve_sharding=*/false));
+    DCHECK(changed);
     return Status::OK();
   }
 
@@ -331,7 +369,8 @@ class FunctionVisitorBase
   }
 
  private:
-  TF_DISALLOW_COPY_AND_ASSIGN(FunctionVisitorBase);
+  FunctionVisitorBase(const FunctionVisitorBase&) = delete;
+  FunctionVisitorBase& operator=(const FunctionVisitorBase&) = delete;
 
   std::function<Status(HloInstructionPtr)> visitor_func_;
 };

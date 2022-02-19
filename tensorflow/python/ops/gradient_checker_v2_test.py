@@ -14,10 +14,6 @@
 # ==============================================================================
 """Tests for compute_gradient."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 
 from tensorflow.python.eager import backprop
@@ -97,6 +93,15 @@ class GradientCheckerTest(test.TestCase):
     tf_logging.info("x1 error = %f", error)
     self.assertLess(error, 1e-4)
 
+  def testBfloat16(self):
+    x1 = constant_op.constant(2.0, dtype="bfloat16")
+    x2 = constant_op.constant(3.0, dtype="bfloat16")
+    # bfloat16 is very imprecise, so we use very large delta and error bar here.
+    error = gradient_checker.max_error(*gradient_checker.compute_gradient(
+        lambda x1: math_ops.add(x1, x2), [x1], delta=0.1))
+    tf_logging.info("x1 error = %f", error)
+    self.assertLess(error, 0.07)
+
   def testAddCustomized(self):
     size = (2, 3)
     x1 = constant_op.constant(2.0, shape=size, dtype=dtypes.float64, name="x1")
@@ -117,7 +122,7 @@ class GradientCheckerTest(test.TestCase):
     p_shape = (4, 2)
     p_size = 8
     params = constant_op.constant(
-        np.arange(p_size).astype(np.float), shape=p_shape, name="p")
+        np.arange(p_size).astype(np.float64), shape=p_shape, name="p")
     error = gradient_checker.max_error(
         *gradient_checker.compute_gradient(f, [params]))
     tf_logging.info("gather error = %f", error)
@@ -136,7 +141,7 @@ class GradientCheckerTest(test.TestCase):
     p_shape = (8, 2)
     p_size = 16
     params = constant_op.constant(
-        np.arange(p_size).astype(np.float), shape=p_shape, name="p")
+        np.arange(p_size).astype(np.float64), shape=p_shape, name="p")
     error = gradient_checker.max_error(
         *gradient_checker.compute_gradient(f, [params]))
     tf_logging.info("nested gather error = %f", error)
@@ -225,7 +230,7 @@ class GradientCheckerTest(test.TestCase):
     x = constant_op.constant(
         np.random.random_sample((0, 3)), dtype=dtypes.float32)
     bad = r"Empty gradient has wrong shape: expected \(0, 3\), got \(3, 0\)"
-    with self.assertRaisesRegexp(ValueError, bad):
+    with self.assertRaisesRegex(ValueError, bad):
       gradient_checker.compute_gradient(f, [x])
 
   def testNaNGradFails(self):
@@ -250,7 +255,7 @@ class GradientCheckerTest(test.TestCase):
         *gradient_checker.compute_gradient(f, [x]))
     # Typical test would assert error < max_err, so assert this test would
     # raise AssertionError, since NaN is not < 1.0.
-    with self.assertRaisesRegexp(AssertionError, "nan not less than 1.0"):
+    with self.assertRaisesRegex(AssertionError, "nan not less than 1.0"):
       self.assertLess(error, 1.0)
 
   def testGradGrad(self):

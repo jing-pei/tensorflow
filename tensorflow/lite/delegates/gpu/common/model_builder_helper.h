@@ -16,6 +16,14 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_DELEGATES_GPU_COMMON_MODEL_BUILDER_HELPER_H_
 #define TENSORFLOW_LITE_DELEGATES_GPU_COMMON_MODEL_BUILDER_HELPER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <string>
+
+#include "absl/strings/str_cat.h"
+#include "tensorflow/lite/c/builtin_op_data.h"
 #include "tensorflow/lite/c/common.h"
 #include "tensorflow/lite/delegates/gpu/common/data_type.h"
 #include "tensorflow/lite/delegates/gpu/common/model.h"
@@ -25,7 +33,6 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/reference/dequantize.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/internal/types.h"
-#include "tensorflow/lite/kernels/kernel_util.h"
 
 namespace tflite {
 namespace gpu {
@@ -37,6 +44,9 @@ absl::Status GetNodeAndRegistration(TfLiteContext* context, int node_id,
 DataType ToDataType(TfLiteType type);
 
 absl::Status ExtractTensorShape(const TfLiteTensor& tflite_tensor, BHWC* bhwc);
+
+absl::Status ExtractAxisFromIndex(const TfLiteTensor& tflite_tensor, int index,
+                                  Axis* axis);
 
 absl::Status ConvertTfLiteTensorToTensorRef(const TfLiteTensor& tflite_tensor,
                                             TensorRef<BHWC>* tensor_ref);
@@ -53,9 +63,6 @@ int GetNumberOfRuntimeInputsForNode(const TfLiteContext* context,
 int GetNumberOfConstInputsForNode(const TfLiteContext* context,
                                   const TfLiteNode* tflite_node);
 
-int GetNumberOfRuntimeOutputsForNode(const TfLiteContext* context,
-                                     const TfLiteNode* tflite_node);
-
 absl::Status CheckInputsOutputs(const TfLiteContext* context,
                                 const TfLiteNode* tflite_node,
                                 int runtime_inputs, int outputs);
@@ -69,10 +76,11 @@ void ConvertFloat16ToFloat32(size_t num_elements, const uint16_t* src,
                              float* dst);
 
 template <typename T>
-void DequantizeConstantTensor(const TfLiteTensor& tensor, const T* source_data,
-                              float* dequantized_data) {
+inline void DequantizeConstantTensor(const TfLiteTensor& tensor,
+                                     const T* source_data,
+                                     float* dequantized_data) {
   TfLiteAffineQuantization* quant_params =
-      reinterpret_cast<TfLiteAffineQuantization*>(tensor.quantization.params);
+      static_cast<TfLiteAffineQuantization*>(tensor.quantization.params);
   if (quant_params->scale->size > 1) {
     // Tensor is per-channel quantized.
     PerChannelDequantizationParams op_params;
@@ -108,6 +116,8 @@ absl::Status CreateVectorCopyData<float>(const TfLiteTensor& tensor,
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, Scalar* shape);
 
+absl::Status CheckIfLinearConvertible(const TfLiteIntArray* dimensions);
+
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, Linear* shape);
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, HWC* shape);
@@ -117,6 +127,12 @@ absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, HW* shape);
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, OHWI* shape);
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, BHWC* shape);
+
+// If there is fused activation present, then there will be another node created
+// that will have identical output as the given node. New operation node will
+// depend on the given node output.
+absl::Status MaybeFuseActivation(TfLiteFusedActivation fused_activation,
+                                 GraphFloat32* graph, Node* node);
 
 }  // namespace gpu
 }  // namespace tflite

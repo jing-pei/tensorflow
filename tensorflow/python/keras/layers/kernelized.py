@@ -15,12 +15,7 @@
 # pylint: disable=g-classes-have-attributes
 """Keras layers that implement explicit (approximate) kernel feature maps."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
-import six
 
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -30,6 +25,7 @@ from tensorflow.python.keras.engine import base_layer
 from tensorflow.python.keras.engine import input_spec
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn
 from tensorflow.python.util.tf_export import keras_export
 
@@ -120,7 +116,7 @@ class RandomFourierFeatures(base_layer.Layer):
       ...)
   ```
 
-  Arguments:
+  Args:
     output_dim: Positive integer, the dimension of the layer's output, i.e., the
       number of random features used to approximate the kernel.
     kernel_initializer: Determines the distribution of the parameters of the
@@ -158,7 +154,7 @@ class RandomFourierFeatures(base_layer.Layer):
       raise ValueError(
           '`output_dim` should be a positive integer. Given: {}.'.format(
               output_dim))
-    if isinstance(kernel_initializer, six.string_types):
+    if isinstance(kernel_initializer, str):
       if kernel_initializer.lower() not in _SUPPORTED_RBF_KERNEL_TYPES:
         raise ValueError(
             'Unsupported kernel type: \'{}\'. Supported kernel types: {}.'
@@ -191,15 +187,15 @@ class RandomFourierFeatures(base_layer.Layer):
     kernel_initializer = _get_random_features_initializer(
         self.kernel_initializer, shape=(input_dim, self.output_dim))
 
-    unscaled_kernel = self.add_weight(
-        name='unscaled_random_features',
+    self.unscaled_kernel = self.add_weight(
+        name='unscaled_kernel',
         shape=(input_dim, self.output_dim),
         dtype=dtypes.float32,
         initializer=kernel_initializer,
         trainable=False)
 
     self.bias = self.add_weight(
-        name='random_features_bias',
+        name='bias',
         shape=(self.output_dim,),
         dtype=dtypes.float32,
         initializer=init_ops.random_uniform_initializer(
@@ -208,20 +204,20 @@ class RandomFourierFeatures(base_layer.Layer):
 
     if self.scale is None:
       self.scale = _get_default_scale(self.kernel_initializer, input_dim)
-    scale = self.add_weight(
-        name='random_features_scale',
+    self.kernel_scale = self.add_weight(
+        name='kernel_scale',
         shape=(1,),
         dtype=dtypes.float32,
         initializer=init_ops.constant_initializer(self.scale),
         trainable=True,
         constraint='NonNeg')
-    self.kernel = (1.0 / scale) * unscaled_kernel
     super(RandomFourierFeatures, self).build(input_shape)
 
   def call(self, inputs):
-    inputs = ops.convert_to_tensor_v2(inputs, dtype=self.dtype)
-    inputs = gen_math_ops.cast(inputs, dtypes.float32)
-    outputs = gen_math_ops.mat_mul(inputs, self.kernel)
+    inputs = ops.convert_to_tensor_v2_with_dispatch(inputs, dtype=self.dtype)
+    inputs = math_ops.cast(inputs, dtypes.float32)
+    kernel = (1.0 / self.kernel_scale) * self.unscaled_kernel
+    outputs = gen_math_ops.MatMul(a=inputs, b=kernel)
     outputs = nn.bias_add(outputs, self.bias)
     return gen_math_ops.cos(outputs)
 
@@ -236,8 +232,8 @@ class RandomFourierFeatures(base_layer.Layer):
 
   def get_config(self):
     kernel_initializer = self.kernel_initializer
-    if isinstance(self.kernel_initializer, init_ops.Initializer):
-      kernel_initializer = initializers.serialize(self.kernel_initializer)
+    if not isinstance(kernel_initializer, str):
+      kernel_initializer = initializers.serialize(kernel_initializer)
     config = {
         'output_dim': self.output_dim,
         'kernel_initializer': kernel_initializer,
@@ -255,7 +251,7 @@ def _get_random_features_initializer(initializer, shape):
     return loc + scale * np.tan(np.pi * (probs - 0.5))
 
   random_features_initializer = initializer
-  if isinstance(initializer, six.string_types):
+  if isinstance(initializer, str):
     if initializer.lower() == 'gaussian':
       random_features_initializer = init_ops.random_normal_initializer(
           stddev=1.0)
@@ -271,7 +267,7 @@ def _get_random_features_initializer(initializer, shape):
 
 
 def _get_default_scale(initializer, input_dim):
-  if (isinstance(initializer, six.string_types) and
+  if (isinstance(initializer, str) and
       initializer.lower() == 'gaussian'):
     return np.sqrt(input_dim / 2.0)
   return 1.0

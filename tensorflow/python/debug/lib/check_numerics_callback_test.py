@@ -13,10 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import re
 
 import numpy as np
@@ -39,6 +35,7 @@ from tensorflow.python.ops import math_grad  # pylint: disable=unused-import
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import googletest
+from tensorflow.python.platform import test
 
 
 class LimitStringLengthTest(test_util.TensorFlowTestCase):
@@ -104,6 +101,27 @@ class CheckNumericsCallbackTest(test_util.TensorFlowTestCase):
     self.assertLen(batches, 2)
     self.assertAllClose(batches[0], np.log([1.25, 2]))
     self.assertAllClose(batches[1], np.log([3.25, 5]))
+
+  @test_util.run_in_graph_and_eager_modes
+  def testGraphModeUsesCorrectPathLengthAndStackHeightLimits(self):
+    check_numerics_callback.enable_check_numerics(
+        stack_height_limit=123, path_length_limit=1200)
+
+    @def_function.function
+    def add_fn(x, y):
+      return x + y
+
+    fake_get_check_numerics_error_message = test.mock.MagicMock(
+        return_value="dummy_message")
+    with test.mock.patch.object(check_numerics_callback,
+                                "get_check_numerics_error_message",
+                                fake_get_check_numerics_error_message):
+      x = constant_op.constant(2.0)
+      y = constant_op.constant(3.0)
+      self.assertAllClose(self.evaluate(add_fn(x, y)), 5.0)
+      (_, call_kwargs) = fake_get_check_numerics_error_message.call_args
+      self.assertEqual(call_kwargs["stack_height_limit"], 123)
+      self.assertEqual(call_kwargs["path_length_limit"], 1200)
 
 
 class CheckNumericsCallbackUnhealthyTest(test_util.TensorFlowTestCase):
@@ -174,6 +192,10 @@ class CheckNumericsCallbackUnhealthyTest(test_util.TensorFlowTestCase):
     self.assertIn("# of -Inf elements: 1\n", message)
     self.assertTrue(re.search(r"Input tensor.*0\.", message))
 
+  @test_util.enable_eager_op_as_function
+  def testCatchEagerOpFloat16NaNWithEagerOpAsFunctionEnabled(self):
+    self.testCatchEagerOpFloat16NaN()
+
   @test_util.run_in_graph_and_eager_modes
   def testCatchFunctionOpInfFloat64(self):
     """Test catching infinites generated in a FuncGraph."""
@@ -228,14 +250,12 @@ class CheckNumericsCallbackUnhealthyTest(test_util.TensorFlowTestCase):
     # Check that the correct line for op creation is printed.
     self.assertTrue(re.search(r"Stack trace of op's creation", message))
     self.assertIn("return math_ops.log(-x)", message)
-    if context.executing_eagerly():
-      # The code path for raising error is slightly different under graph mode.
-      self.assertTrue(message.endswith("\n"))
 
   @test_util.run_in_graph_and_eager_modes
   @test_util.disable_xla(
       "There is a small inconsistency in the step at which overflow happens: "
       "128 (without XLA) and 127 (with XLA).")
+  @test_util.disable_tfrt("b/177261532: TFRT cannot detect overflow yet.")
   def testOverflowInTfFunction(self):
     """Test catching Infinity caused by overflow in a tf.function with while."""
     check_numerics_callback.enable_check_numerics()
@@ -371,6 +391,22 @@ class CheckNumericsCallbackUnhealthyTest(test_util.TensorFlowTestCase):
       self.assertTrue((re.search(r"graph op.*\"Reciprocal\"", message) or
                        re.search(r"graph op.*\"Xdivy\"", message)))
       self.assertTrue(re.search(r"dtype.*float32", message))
+
+  def testEagerModeUsesCorrectPathLengthAndStackHeightLimits(self):
+    check_numerics_callback.enable_check_numerics(
+        stack_height_limit=123, path_length_limit=1200)
+    fake_get_check_numerics_error_message = test.mock.MagicMock(
+        return_value="dummy_message")
+    with test.mock.patch.object(check_numerics_callback,
+                                "get_check_numerics_error_message",
+                                fake_get_check_numerics_error_message):
+      x = constant_op.constant(2.0)
+      y = constant_op.constant(0.0)
+      self._assertRaisesInvalidArgumentErrorAndGetMessage(
+          lambda: x / y)  # Expected to generate an inf.
+      (_, call_kwargs) = fake_get_check_numerics_error_message.call_args
+      self.assertEqual(call_kwargs["stack_height_limit"], 123)
+      self.assertEqual(call_kwargs["path_length_limit"], 1200)
 
   @test_util.run_in_graph_and_eager_modes
   def testExpectedNaNOpOutputs(self):
